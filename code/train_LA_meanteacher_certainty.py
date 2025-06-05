@@ -76,7 +76,7 @@ if __name__ == "__main__":
         os.makedirs(snapshot_path)
     if os.path.exists(snapshot_path + '/code'):
         shutil.rmtree(snapshot_path + '/code')
-    shutil.copytree('.', snapshot_path + '/code', shutil.ignore_patterns(['.git','__pycache__']))
+    shutil.copytree('..', snapshot_path + '/code', shutil.ignore_patterns(['.git', '__pycache__']))
 
     logging.basicConfig(filename=snapshot_path+"/log.txt", level=logging.INFO,
                         format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
@@ -166,7 +166,7 @@ if __name__ == "__main__":
 
             consistency_weight = get_current_consistency_weight(iter_num//150)
             consistency_dist = consistency_criterion(outputs, ema_output) #(batch, 2, 112,112,80)
-            threshold = (0.75+0.25*ramps.sigmoid_rampup(iter_num, max_iterations))*np.log(2)
+            threshold = (0.75 + 0.25 * ramps.sigmoid_rampup(iter_num, max_iterations)) * np.log(2)
             mask = (uncertainty<threshold).float()
             consistency_dist = torch.sum(mask*consistency_dist)/(2*torch.sum(mask)+1e-16)
             consistency_loss = consistency_weight * consistency_dist

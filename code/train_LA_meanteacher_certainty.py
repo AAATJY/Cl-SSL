@@ -1,4 +1,5 @@
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import sys
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
@@ -43,7 +44,6 @@ args = parser.parse_args()
 train_data_path = args.root_path
 snapshot_path = "../model/" + args.exp + "/"
 
-os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 batch_size = args.batch_size * len(args.gpu.split(','))
 max_iterations = args.max_iterations
 base_lr = args.base_lr
@@ -66,7 +66,7 @@ def get_current_consistency_weight(epoch):
 def update_ema_variables(model, ema_model, alpha, global_step):
     alpha = min(1 - 1 / (global_step + 1), alpha)
     for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-        ema_param.data.mul_(alpha).add_(1 - alpha, param.data)
+        ema_param.data.mul_(alpha).add_(param.data, alpha=1 - alpha)
 
 def kd_loss(student_feats, teacher_feats):
     # 多尺度特征蒸馏（L2）
@@ -80,7 +80,6 @@ if __name__ == "__main__":
         os.makedirs(snapshot_path)
     if os.path.exists(snapshot_path + '/code'):
         shutil.rmtree(snapshot_path + '/code')
-    shutil.copytree('..', snapshot_path + '/code', shutil.ignore_patterns(['.git', '__pycache__']))
 
     logging.basicConfig(filename=snapshot_path+"/log.txt", level=logging.INFO,
                         format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
@@ -137,34 +136,37 @@ if __name__ == "__main__":
             volume_batch_r = volume_batch.repeat(2, 1, 1, 1, 1)
             stride = volume_batch_r.shape[0] // 2
             preds = torch.zeros([stride * T, 2, 112, 112, 80]).cuda()
-            for i in range(T//2):
+            for i in range(T // 2):
                 ema_inputs = volume_batch_r + torch.clamp(torch.randn_like(volume_batch_r) * 0.1, -0.2, 0.2)
                 with torch.no_grad():
                     preds[2 * stride * i:2 * stride * (i + 1)] = ema_model(ema_inputs)
             preds = F.softmax(preds, dim=1)
             preds = preds.reshape(T, stride, 2, 112, 112, 80)
             preds = torch.mean(preds, dim=0)
-            uncertainty = -1.0*torch.sum(preds*torch.log(preds + 1e-6), dim=1, keepdim=True)
+            uncertainty = -1.0 * torch.sum(preds * torch.log(preds + 1e-6), dim=1, keepdim=True)
             # ----------- 区域掩码 ------------
             threshold = (0.75 + 0.25 * ramps.sigmoid_rampup(iter_num, max_iterations)) * np.log(2)
             edge_mask, core_mask = get_region_masks(outputs_soft, uncertainty, threshold=threshold, edge_kernel=3)
+            # 下采样 edge_mask 和 core_mask 到 student_feats[-2] 的空间尺寸
+            edge_mask_ds = F.interpolate(edge_mask.float(), size=student_feats[-2].shape[2:], mode='nearest')
+            core_mask_ds = F.interpolate(core_mask.float(), size=student_feats[-2].shape[2:], mode='nearest')
             # ----------- 损失计算 ------------
             loss_seg = F.cross_entropy(outputs[:labeled_bs], label_batch[:labeled_bs])
             loss_seg_dice = losses.dice_loss(outputs_soft[:labeled_bs, 1, :, :, :], label_batch[:labeled_bs] == 1)
             # 一致性损失
-            consistency_weight = get_current_consistency_weight(iter_num//150)
+            consistency_weight = get_current_consistency_weight(iter_num // 150)
             consistency_dist = losses.softmax_mse_loss(outputs, ema_output)
-            mask = (uncertainty<threshold).float()
-            consistency_dist = torch.sum(mask*consistency_dist)/(2*torch.sum(mask)+1e-16)
+            mask = (uncertainty < threshold).float()
+            consistency_dist = torch.sum(mask * consistency_dist) / (2 * torch.sum(mask) + 1e-16)
             consistency_loss = consistency_weight * consistency_dist
             # 边缘体素对比
-            loss_voxel = voxel_contrastive_loss(student_feats[-2], edge_mask)
+            loss_voxel = voxel_contrastive_loss(student_feats[-2], edge_mask_ds)
             # 核心补丁对比
-            loss_patch = patch_contrastive_loss(student_feats[-2], core_mask)
+            loss_patch = patch_contrastive_loss(student_feats[-2], core_mask_ds)
             # 多尺度蒸馏
             loss_kd = kd_loss(student_feats, teacher_feats)
             # 总损失
-            loss = 0.5*(loss_seg+loss_seg_dice) + consistency_loss + \
+            loss = 0.5 * (loss_seg + loss_seg_dice) + consistency_loss + \
                    args.lambda_voxel * loss_voxel + args.lambda_patch * loss_patch + args.lambda_kd * loss_kd
             optimizer.zero_grad()
             loss.backward()

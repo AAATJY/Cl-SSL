@@ -31,7 +31,8 @@ from dataloaders import utils
 from utils import ramps, losses
 from dataloaders.la_heart import LAHeart, RandomCrop, RandomRotFlip, ToTensor, TwoStreamBatchSampler
 
-from utils.contrastive_losses_v2 import voxel_contrastive_loss_uncertainty, patch_contrastive_loss
+from utils.contrastive_losses_v2 import nt_xent_loss, patch_contrastive_loss
+from utils.voxel_uncertainty_sampler import extract_voxel_features_by_uncertainty
 from utils.region_mask import get_region_masks
 
 parser = argparse.ArgumentParser()
@@ -168,13 +169,26 @@ if __name__ == "__main__":
             consistency_dist = torch.sum(mask * consistency_dist) / (2 * torch.sum(mask) + 1e-16)
             consistency_loss = consistency_weight * consistency_dist
             # 边缘体素对比
-            loss_voxel = voxel_contrastive_loss_uncertainty(
-                student_feats[-2], edge_mask_ds, core_mask_ds,
-                uncertainty=uncertainty if uncertainty is not None else None,
-                temperature=0.2,
-                max_samples=1024,
-                hard_negative=True  # True/False均可尝试
-            )
+            # === 新体素级对比采样 ===
+            features_layer = student_feats[-2]  # 选用你认为合适的特征层
+            voxel_results = extract_voxel_features_by_uncertainty(outputs, features_layer, low_percent=0.1,
+                                                                  high_percent=0.1)
+
+            # 汇总所有batch、所有类别的低不确定性体素特征
+            all_low_voxel_feats = []
+            for batch in voxel_results:
+                for cls in batch['class_results']:
+                    feats = batch['class_results'][cls]['low_uncertainty_features']
+                    if feats.shape[0] >= 2:  # 至少两个才做对比
+                        all_low_voxel_feats.append(feats)
+            if len(all_low_voxel_feats) > 0:
+                all_low_voxel_feats = torch.cat(all_low_voxel_feats, dim=0)  # [M, C_feat]
+                perm = torch.randperm(all_low_voxel_feats.size(0), device=all_low_voxel_feats.device)
+                anchor = all_low_voxel_feats
+                positive = all_low_voxel_feats[perm]
+                loss_voxel = nt_xent_loss(anchor, positive, temperature=0.2)
+            else:
+                loss_voxel = torch.tensor(0.0, device=features_layer.device)
             # 核心补丁对比
             loss_patch = patch_contrastive_loss(student_feats[-2], core_mask_ds)
             # 多尺度蒸馏

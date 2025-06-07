@@ -20,49 +20,54 @@ def voxel_contrastive_loss_uncertainty(
     体素级对比损失，正样本来自核心/边缘mask区域，可以结合不确定性进一步采样
     """
     B, C, D, H, W = feat_map.shape
-    # 1. 提取核心正样本/边缘正样本
     feature_flat = feat_map.permute(0,2,3,4,1).reshape(-1, C)
     edge_flat = edge_mask.reshape(-1).bool()
     core_flat = core_mask.reshape(-1).bool()
     pos_idx = (edge_flat | core_flat).nonzero(as_tuple=True)[0]
     if pos_idx.numel() < 2:
         return torch.tensor(0.0, device=feat_map.device, requires_grad=True)
-    if pos_idx.numel() > max_samples:
-        perm_idx = torch.randperm(pos_idx.numel(), device=feat_map.device)[:max_samples]
-        pos_idx = pos_idx[perm_idx]
-    pos_feats = feature_flat[pos_idx]
 
-    # 2. （可选）不确定性加权采样正样本：例如 uncertainty<阈值
+    # === 不确定性加权采样正样本 ===
     if uncertainty is not None:
         uncertainty_flat = uncertainty.reshape(-1)
-        # threshold = uncertainty_flat.median() # e.g. use median
-        low_uncertainty = uncertainty_flat[pos_idx].topk(max_samples, largest=False).indices
-        pos_feats = pos_feats[low_uncertainty]
+        valid_uncertainty = uncertainty_flat[pos_idx]
+        num_valid = valid_uncertainty.numel()
+        k = min(max_samples, num_valid)
+        if k < 2:
+            return torch.tensor(0.0, device=feat_map.device, requires_grad=True)
+        # 采样低不确定性体素（也可采高不确定性体素用于分析，按需修改）
+        low_uncertainty_indices = valid_uncertainty.topk(k, largest=False).indices
+        pos_feats = feature_flat[pos_idx][low_uncertainty_indices]
+    else:
+        num_valid = pos_idx.numel()
+        k = min(max_samples, num_valid)
+        if k < 2:
+            return torch.tensor(0.0, device=feat_map.device, requires_grad=True)
+        perm_idx = torch.randperm(num_valid, device=feat_map.device)[:k]
+        pos_feats = feature_flat[pos_idx][perm_idx]
 
-    # 3. 负样本采样：选取batch其他非mask区域
+    # === 负样本采样 ===
     neg_idx = (~(edge_flat | core_flat)).nonzero(as_tuple=True)[0]
     if neg_idx.numel() > max_samples:
         perm_idx = torch.randperm(neg_idx.numel(), device=feat_map.device)[:max_samples]
         neg_idx = neg_idx[perm_idx]
     neg_feats = feature_flat[neg_idx]
 
-    # 4. 构造anchor-positive对 & hard negative
+    # === 构造anchor-positive对 & hard negative ===
     N = pos_feats.size(0)
     if N < 2:
-        return torch.tensor(0.0, device=feat_map.device)
+        return torch.tensor(0.0, device=feat_map.device, requires_grad=True)
     perm = torch.randperm(N, device=feat_map.device)
     feat_q = pos_feats
     feat_k = pos_feats[perm]
 
-    # 5. Hard negative mining
+    # === Hard negative mining ===
     if hard_negative and neg_feats.size(0) > 0:
-        # 计算 anchor 和所有 neg_feats 的相似度，取最难的neg
         feat_q_norm = F.normalize(feat_q, dim=1)
         neg_norm = F.normalize(neg_feats, dim=1)
         sim = torch.mm(feat_q_norm, neg_norm.t())  # [N, N_neg]
         hard_neg_idx = sim.argmax(dim=1) # for each anchor, pick hardest negative
         feat_n = neg_feats[hard_neg_idx]
-        # anchor-positive, anchor-hardnegative, NT-Xent
         pos_sim = (feat_q * feat_k).sum(dim=1) / temperature
         neg_sim = (feat_q * feat_n).sum(dim=1) / temperature
         logits = torch.stack([pos_sim, neg_sim], dim=1)

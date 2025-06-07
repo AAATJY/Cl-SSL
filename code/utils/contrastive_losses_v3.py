@@ -67,15 +67,15 @@ def patch_contrastive_loss_dycon(
     pool = torch.nn.AvgPool3d(kernel_size=patch_size, stride=patch_size)
     mask_pool = pool(mask.float())
     feat_pool = pool(feat_map * mask.float())
-    valid = (mask_pool.squeeze(1) > 0.5)
-    feat_patches = feat_pool.permute(0,2,3,4,1)[valid].reshape(-1, C)
+
+    valid = (mask_pool.squeeze(1) > 0.5)  # [B, D', H', W']
+    feat_patches = feat_pool.permute(0, 2, 3, 4, 1)[valid].reshape(-1, feat_map.shape[1])
     if feat_patches.size(0) < 2:
         return torch.tensor(0.0, device=feat_map.device, requires_grad=True)
-    # 3. uncertainty优先采样
     if uncertainty is not None:
-        uncertainty_patches = pool(uncertainty.float())[valid].reshape(-1)
+        uncertainty_patches = pool(uncertainty.float()).squeeze(1)[valid].reshape(-1)
         k = min(max_patches, feat_patches.size(0))
-        idx = torch.topk(-uncertainty_patches, k).indices # 低uncertainty优先
+        idx = torch.topk(-uncertainty_patches, k).indices  # 低uncertainty优先
         feat_patches = feat_patches[idx]
     else:
         if feat_patches.size(0) > max_patches:

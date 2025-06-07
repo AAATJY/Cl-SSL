@@ -1,4 +1,5 @@
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import argparse
 import torch
 from networks.vnet import VNet
@@ -6,11 +7,10 @@ from test_util import test_all_case
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--model', type=str,  default='vnet_supervisedonly_dp', help='model_name')
+parser.add_argument('--model', type=str,  default='CL1', help='model_name')
 parser.add_argument('--gpu', type=str,  default='0', help='GPU to use')
 FLAGS = parser.parse_args()
 
-os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpu
 snapshot_path = "../model/"+FLAGS.model+"/"
 test_save_path = "../model/prediction/"+FLAGS.model+"_post/"
 if not os.path.exists(test_save_path):
@@ -40,3 +40,13 @@ def test_calculate_metric(epoch_num):
 if __name__ == '__main__':
     metric = test_calculate_metric(6000)
     print(metric)
+    metric = test_calculate_metric(5000)
+    print(metric)
+    # metric = test_calculate_metric(4000)
+    # print(metric)
+    # metric = test_calculate_metric(3000)
+    # print(metric)
+    # metric = test_calculate_metric(2000)
+    # print(metric)
+    # metric = test_calculate_metric(1000)
+    # print(metric)

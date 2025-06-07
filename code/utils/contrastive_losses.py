@@ -35,11 +35,6 @@ def voxel_contrastive_loss(feat_map, mask, temperature=0.2, max_samples=2048):
     return nt_xent_loss(feat_q, feat_k, temperature)
 
 def patch_contrastive_loss(feat_map, mask, patch_size=(8,8,8), temperature=0.2, max_patches=256):
-    """
-    feat_map: [B, C, D, H, W]
-    mask: [B, 1, D, H, W], 1=core
-    返回核心区域补丁对比损失
-    """
     B, C, D, H, W = feat_map.shape
     stride = patch_size
     pool = torch.nn.AvgPool3d(kernel_size=patch_size, stride=patch_size)

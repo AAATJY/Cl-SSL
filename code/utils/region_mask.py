@@ -2,12 +2,6 @@ import torch
 import torch.nn.functional as F
 
 def get_region_masks(pred_soft, uncertainty, threshold=None, edge_kernel=3):
-    """
-    pred_soft: [B, C, D, H, W] softmax
-    uncertainty: [B, 1, D, H, W]
-    threshold: float or None, uncertainty门控
-    返回 edge_mask, core_mask
-    """
     pred = torch.argmax(pred_soft, dim=1, keepdim=True)  # [B,1,D,H,W]
     # morphological edge
     kernel = torch.ones((1,1,edge_kernel,edge_kernel,edge_kernel), device=pred.device)

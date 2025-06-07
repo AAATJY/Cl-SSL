@@ -31,12 +31,12 @@ from dataloaders import utils
 from utils import ramps, losses
 from dataloaders.la_heart import LAHeart, RandomCrop, RandomRotFlip, ToTensor, TwoStreamBatchSampler
 
-from utils.contrastive_losses import voxel_contrastive_loss, patch_contrastive_loss
+from utils.contrastive_losses_v2 import voxel_contrastive_loss_uncertainty, patch_contrastive_loss
 from utils.region_mask import get_region_masks
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str,  default='CL1', help='model_name')
+parser.add_argument('--exp', type=str,  default='CL2', help='model_name')
 parser.add_argument('--max_iterations', type=int,  default=6000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -168,7 +168,13 @@ if __name__ == "__main__":
             consistency_dist = torch.sum(mask * consistency_dist) / (2 * torch.sum(mask) + 1e-16)
             consistency_loss = consistency_weight * consistency_dist
             # 边缘体素对比
-            loss_voxel = voxel_contrastive_loss(student_feats[-2], edge_mask_ds)
+            loss_voxel = voxel_contrastive_loss_uncertainty(
+                student_feats[-2], edge_mask_ds, core_mask_ds,
+                uncertainty=uncertainty if uncertainty is not None else None,
+                temperature=0.2,
+                max_samples=1024,
+                hard_negative=True  # True/False均可尝试
+            )
             # 核心补丁对比
             loss_patch = patch_contrastive_loss(student_feats[-2], core_mask_ds)
             # 多尺度蒸馏

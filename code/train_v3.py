@@ -1,10 +1,10 @@
 """
-6000次：[0.88135327  0.79014253 12.25124604  3.49887661]
-5000次：[0.88263358  0.79238839 11.50504356  3.16043276]
-4000次：[0.8815926   0.79074633 11.94703053  3.27772464]
-3000次：[0.88297314  0.79272962 12.11338875  3.2815329 ]
-2000次：[0.87139157  0.7753485  12.70827868  3.79566673]
-1000次：[0.8469684   0.73961901 14.73560037  3.8248198 ]
+6000次：
+5000次：
+4000次：
+3000次：
+2000次：
+1000次：
 """
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
@@ -31,12 +31,12 @@ from dataloaders import utils
 from utils import ramps, losses
 from dataloaders.la_heart import LAHeart, RandomCrop, RandomRotFlip, ToTensor, TwoStreamBatchSampler
 
-from utils.contrastive_losses_v3 import voxel_contrastive_loss_uncertainty, patch_contrastive_loss_dycon
+from utils.contrastive_losses_v3 import voxel_contrastive_loss, patch_contrastive_loss_dycon
 from utils.region_mask import get_region_masks
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str,  default='CL2', help='model_name')
+parser.add_argument('--exp', type=str,  default='CL3', help='model_name')
 parser.add_argument('--max_iterations', type=int,  default=6000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -168,18 +168,14 @@ if __name__ == "__main__":
             consistency_dist = torch.sum(mask * consistency_dist) / (2 * torch.sum(mask) + 1e-16)
             consistency_loss = consistency_weight * consistency_dist
             # 边缘体素对比
-            loss_voxel = voxel_contrastive_loss_uncertainty(
-                student_feats[-2], edge_mask_ds, core_mask_ds,
-                uncertainty=uncertainty if uncertainty is not None else None,
-                temperature=0.2,
-                max_samples=1024,
-                hard_negative=True  # True/False均可尝试
-            )
+            loss_voxel = voxel_contrastive_loss(student_feats[-2], edge_mask_ds)
+
             # 核心补丁对比
+            uncertainty_ds = F.interpolate(uncertainty, size=core_mask_ds.shape[2:], mode='nearest')
             loss_patch = patch_contrastive_loss_dycon(
                 student_feats[-2],
                 core_mask_ds,
-                uncertainty=uncertainty,
+                uncertainty=uncertainty_ds,
                 patch_size=(8, 8, 8),  # 可根据特征图实际空间调整
                 temperature=0.2,  # 可调
                 max_patches=256,  # 可调

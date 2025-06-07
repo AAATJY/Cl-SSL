@@ -2,6 +2,24 @@ import torch
 from torch.nn import functional as F
 import numpy as np
 
+def patchwise_contrastive_loss(feat_q, feat_k, temperature=0.1):
+    """
+    feat_q: (B, C, D, H, W)  query patch features
+    feat_k: (B, C, D, H, W)  key patch features (可为增强视图或ema)
+    """
+    B, C, D, H, W = feat_q.shape
+    N = D * H * W
+    # flatten spatial dims
+    q = feat_q.permute(0,2,3,4,1).reshape(-1, C)   # (B*N, C)
+    k = feat_k.permute(0,2,3,4,1).reshape(-1, C)   # (B*N, C)
+    q = F.normalize(q, dim=1)
+    k = F.normalize(k, dim=1)
+
+    logits = torch.mm(q, k.t()) / temperature   # (B*N, B*N)
+    labels = torch.arange(q.shape[0], device=q.device)
+    loss = F.cross_entropy(logits, labels)
+    return loss
+
 def dice_loss(score, target):
     target = target.float()
     smooth = 1e-5

@@ -1,11 +1,3 @@
-"""
-6000次：[0.88714963  0.79927658 12.77718752  3.34410641]
-5000次：[0.88638592  0.79813848 12.92201064  3.45780644]
-4000次：
-3000次：[0.87889227  0.78693847 13.51368827  3.82845589]
-2000次：[0.87320395  0.77801562 12.16096589  3.67920779]
-1000次：
-"""
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import sys
@@ -26,17 +18,15 @@ import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 
-from networks.vnet import VNet
+from networks.vnet_contrastive import VNetContrastive
 from dataloaders import utils
 from utils import ramps, losses
-from dataloaders.la_heart import LAHeart, RandomCrop, RandomRotFlip, ToTensor, TwoStreamBatchSampler
-
-from utils.contrastive_losses_v3 import voxel_contrastive_loss, patch_contrastive_loss_dycon
-from utils.region_mask import get_region_masks
+from utils.losses import patchwise_contrastive_loss
+from dataloaders.la_heart import LAHeart, RandomCrop, CenterCrop, RandomRotFlip, ToTensor, TwoStreamBatchSampler
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str,  default='CL3', help='model_name')
+parser.add_argument('--exp', type=str,  default='CL4', help='model_name')
 parser.add_argument('--max_iterations', type=int,  default=6000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -44,13 +34,18 @@ parser.add_argument('--base_lr', type=float,  default=0.01, help='maximum epoch 
 parser.add_argument('--deterministic', type=int,  default=1, help='whether use deterministic training')
 parser.add_argument('--seed', type=int,  default=1337, help='random seed')
 parser.add_argument('--gpu', type=str,  default='0', help='GPU to use')
-parser.add_argument('--lambda_voxel', type=float, default=0.05, help='voxel contrast loss weight')
-parser.add_argument('--lambda_patch', type=float, default=0.05, help='patch contrast loss weight')
-parser.add_argument('--lambda_kd', type=float, default=0.01, help='feature distill loss weight')
+### costs
+parser.add_argument('--ema_decay', type=float,  default=0.99, help='ema_decay')
+parser.add_argument('--consistency_type', type=str,  default="mse", help='consistency_type')
+parser.add_argument('--consistency', type=float,  default=0.1, help='consistency')
+parser.add_argument('--consistency_rampup', type=float,  default=40.0, help='consistency_rampup')
+parser.add_argument('--contrastive_weight', type=float, default=0.1, help='Weight for contrastive loss')
+
 args = parser.parse_args()
 
 train_data_path = args.root_path
 snapshot_path = "../model/" + args.exp + "/"
+
 
 batch_size = args.batch_size * len(args.gpu.split(','))
 max_iterations = args.max_iterations
@@ -69,33 +64,27 @@ num_classes = 2
 patch_size = (112, 112, 80)
 
 def get_current_consistency_weight(epoch):
-    return 0.1 * ramps.sigmoid_rampup(epoch, 40.0)
+    return args.consistency * ramps.sigmoid_rampup(epoch, args.consistency_rampup)
 
 def update_ema_variables(model, ema_model, alpha, global_step):
     alpha = min(1 - 1 / (global_step + 1), alpha)
     for ema_param, param in zip(ema_model.parameters(), model.parameters()):
         ema_param.data.mul_(alpha).add_(param.data, alpha=1 - alpha)
 
-def kd_loss(student_feats, teacher_feats):
-    # 多尺度特征蒸馏（L2）
-    loss = 0.0
-    for s, t in zip(student_feats, teacher_feats):
-        loss += F.mse_loss(s, t.detach())
-    return loss / len(student_feats)
-
 if __name__ == "__main__":
+    ## make logger file
     if not os.path.exists(snapshot_path):
         os.makedirs(snapshot_path)
     if os.path.exists(snapshot_path + '/code'):
         shutil.rmtree(snapshot_path + '/code')
-
     logging.basicConfig(filename=snapshot_path+"/log.txt", level=logging.INFO,
                         format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
     logging.info(str(args))
 
+
     def create_model(ema=False):
-        net = VNet(n_channels=1, n_classes=num_classes, normalization='batchnorm', has_dropout=True)
+        net = VNetContrastive(n_channels=1, n_classes=num_classes, normalization='batchnorm', has_dropout=True)
         model = net.cuda()
         if ema:
             for param in model.parameters():
@@ -112,6 +101,12 @@ if __name__ == "__main__":
                           RandomCrop(patch_size),
                           ToTensor(),
                           ]))
+    db_test = LAHeart(base_dir=train_data_path,
+                       split='test',
+                       transform = transforms.Compose([
+                           CenterCrop(patch_size),
+                           ToTensor()
+                       ]))
     labeled_idxs = list(range(16))
     unlabeled_idxs = list(range(16, 80))
     batch_sampler = TwoStreamBatchSampler(labeled_idxs, unlabeled_idxs, batch_size, batch_size-labeled_bs)
@@ -122,6 +117,14 @@ if __name__ == "__main__":
     model.train()
     ema_model.train()
     optimizer = optim.SGD(model.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
+
+    if args.consistency_type == 'mse':
+        consistency_criterion = losses.softmax_mse_loss
+    elif args.consistency_type == 'kl':
+        consistency_criterion = losses.softmax_kl_loss
+    else:
+        assert False, args.consistency_type
+
     writer = SummaryWriter(snapshot_path+'/log')
     logging.info("{} itertations per epoch".format(len(trainloader)))
 
@@ -130,16 +133,26 @@ if __name__ == "__main__":
     lr_ = base_lr
     model.train()
     for epoch_num in tqdm(range(max_epoch), ncols=70):
+        time1 = time.time()
         for i_batch, sampled_batch in enumerate(trainloader):
+            time2 = time.time()
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
+
+            # 获取模型输出和patch特征
+            outputs, patch_feat = model(volume_batch)
+            with torch.no_grad():
+                ema_outputs, patch_feat_ema = ema_model(volume_batch)
+
+            # Patch-level Contrastive Loss（DyCON风格）
+            contrastive_loss = patchwise_contrastive_loss(patch_feat, patch_feat_ema)
+
+            # 不确定性估计（与原先一致）
             noise = torch.clamp(torch.randn_like(volume_batch) * 0.1, -0.2, 0.2)
             ema_inputs = volume_batch + noise
-            # ----------- 网络输出，多尺度特征 ------------
-            outputs, student_feats = model(volume_batch, return_features=True)
+            outputs_for_un = outputs  # 直接用当前outputs
             with torch.no_grad():
-                ema_output, teacher_feats = ema_model(ema_inputs, return_features=True)
-            outputs_soft = F.softmax(outputs, dim=1)
+                ema_output_for_un = ema_model(ema_inputs)[0]
             T = 8
             volume_batch_r = volume_batch.repeat(2, 1, 1, 1, 1)
             stride = volume_batch_r.shape[0] // 2
@@ -147,52 +160,33 @@ if __name__ == "__main__":
             for i in range(T // 2):
                 ema_inputs = volume_batch_r + torch.clamp(torch.randn_like(volume_batch_r) * 0.1, -0.2, 0.2)
                 with torch.no_grad():
-                    preds[2 * stride * i:2 * stride * (i + 1)] = ema_model(ema_inputs)
+                    preds[2 * stride * i:2 * stride * (i + 1)] = ema_model(ema_inputs)[0]
             preds = F.softmax(preds, dim=1)
             preds = preds.reshape(T, stride, 2, 112, 112, 80)
-            preds = torch.mean(preds, dim=0)
-            uncertainty = -1.0 * torch.sum(preds * torch.log(preds + 1e-6), dim=1, keepdim=True)
-            # ----------- 区域掩码 ------------
-            threshold = (0.75 + 0.25 * ramps.sigmoid_rampup(iter_num, max_iterations)) * np.log(2)
-            edge_mask, core_mask = get_region_masks(outputs_soft, uncertainty, threshold=threshold, edge_kernel=3)
-            # 下采样 edge_mask 和 core_mask 到 student_feats[-2] 的空间尺寸
-            edge_mask_ds = F.interpolate(edge_mask.float(), size=student_feats[-2].shape[2:], mode='nearest')
-            core_mask_ds = F.interpolate(core_mask.float(), size=student_feats[-2].shape[2:], mode='nearest')
-            # ----------- 损失计算 ------------
+            preds = torch.mean(preds, dim=0)  # (batch, 2, 112,112,80)
+            uncertainty = -1.0 * torch.sum(preds * torch.log(preds + 1e-6), dim=1,
+                                           keepdim=True)  # (batch, 1, 112,112,80)
+
+            # 监督分割损失
             loss_seg = F.cross_entropy(outputs[:labeled_bs], label_batch[:labeled_bs])
+            outputs_soft = F.softmax(outputs, dim=1)
             loss_seg_dice = losses.dice_loss(outputs_soft[:labeled_bs, 1, :, :, :], label_batch[:labeled_bs] == 1)
+
             # 一致性损失
             consistency_weight = get_current_consistency_weight(iter_num // 150)
-            consistency_dist = losses.softmax_mse_loss(outputs, ema_output)
+            consistency_dist = consistency_criterion(outputs, ema_outputs)
+            threshold = (0.75 + 0.25 * ramps.sigmoid_rampup(iter_num, max_iterations)) * np.log(2)
             mask = (uncertainty < threshold).float()
             consistency_dist = torch.sum(mask * consistency_dist) / (2 * torch.sum(mask) + 1e-16)
             consistency_loss = consistency_weight * consistency_dist
-            # 边缘体素对比
-            loss_voxel = voxel_contrastive_loss(student_feats[-2], edge_mask_ds)
 
-            # 核心补丁对比
-            uncertainty_ds = F.interpolate(uncertainty, size=core_mask_ds.shape[2:], mode='nearest')
-            loss_patch = patch_contrastive_loss_dycon(
-                student_feats[-2],
-                core_mask_ds,
-                uncertainty=uncertainty_ds,
-                patch_size=(8, 8, 8),  # 可根据特征图实际空间调整
-                temperature=0.2,  # 可调
-                max_patches=256,  # 可调
-                hard_negative=True,  # 建议True
-                dynamic_threshold=True,  # True:动态uncertainty过滤
-                epoch=iter_num // len(trainloader),
-                max_epoch=max_epoch
-            )
-            # 多尺度蒸馏
-            loss_kd = kd_loss(student_feats, teacher_feats)
-            # 总损失
-            loss = 0.5 * (loss_seg + loss_seg_dice) + consistency_loss + \
-                   args.lambda_voxel * loss_voxel + args.lambda_patch * loss_patch + args.lambda_kd * loss_kd
+            # 总损失：分割损失+一致性损失+对比损失
+            loss = 0.5 * (loss_seg + loss_seg_dice) + consistency_loss + args.contrastive_weight * contrastive_loss
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            update_ema_variables(model, ema_model, 0.99, iter_num)
+            update_ema_variables(model, ema_model, args.ema_decay, iter_num)
 
             iter_num = iter_num + 1
             writer.add_scalar('uncertainty/mean', uncertainty[0,0].mean(), iter_num)

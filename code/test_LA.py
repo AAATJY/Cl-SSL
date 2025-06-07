@@ -2,12 +2,12 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import argparse
 import torch
-from networks.vnet import VNet
+from networks.vnet_contrastive import VNetContrastive
 from test_util import test_all_case
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--model', type=str,  default='CL3', help='model_name')
+parser.add_argument('--model', type=str,  default='CL4', help='model_name')
 parser.add_argument('--gpu', type=str,  default='0', help='GPU to use')
 FLAGS = parser.parse_args()
 
@@ -24,7 +24,7 @@ image_list = [FLAGS.root_path +item.replace('\n', '')+"/mri_norm2.h5" for item i
 
 
 def test_calculate_metric(epoch_num):
-    net = VNet(n_channels=1, n_classes=num_classes, normalization='batchnorm', has_dropout=False).cuda()
+    net = VNetContrastive(n_channels=1, n_classes=num_classes, normalization='batchnorm', has_dropout=False).cuda()
     save_mode_path = os.path.join(snapshot_path, 'iter_' + str(epoch_num) + '.pth')
     net.load_state_dict(torch.load(save_mode_path))
     print("init weight from {}".format(save_mode_path))
@@ -40,13 +40,13 @@ def test_calculate_metric(epoch_num):
 if __name__ == '__main__':
     # metric = test_calculate_metric(6000)
     # print(metric)
-    metric = test_calculate_metric(5000)
-    print(metric)
-    metric = test_calculate_metric(4000)
-    print(metric)
+    # metric = test_calculate_metric(5000)
+    # print(metric)
+    # metric = test_calculate_metric(4000)
+    # print(metric)
     # metric = test_calculate_metric(3000)
     # print(metric)
     # metric = test_calculate_metric(2000)
     # print(metric)
-    # metric = test_calculate_metric(1000)
-    # print(metric)
+    metric = test_calculate_metric(1000)
+    print(metric)

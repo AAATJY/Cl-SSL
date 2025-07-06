@@ -1,4 +1,3 @@
-# 该版本数据为通过元学习优化多扰动增强方法权重的数据增强文件，用于train_version1_4.py,train_version1_4_1.py,train_version1_4_2.py
 import itertools
 
 import h5py

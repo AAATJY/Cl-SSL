@@ -69,7 +69,7 @@ def get_patch_label(edge_patch, core_patch, edge_thresh=0.2, core_thresh=0.5):
 
 # ----------------- Patch区域二分类数据集 -----------------
 class PatchRegionDataset(Dataset):
-    def __init__(self, laheart_root, split='train', patch_size=16, edge_kernel=3, edge_thresh=0.15, core_thresh=0.5, max_num=None):
+    def __init__(self, laheart_root, split='train', patch_size=16, edge_kernel=3, edge_thresh=0.14, core_thresh=0.6, max_num=None):
         self.samples = []
         dataset = LAHeart(base_dir=laheart_root, split=split, num=max_num)
         for i in tqdm(range(len(dataset)), desc="Preparing region dataset"):
@@ -127,19 +127,38 @@ class UNet3D_Region(nn.Module):
         return out
 
 # ----------------- 训练主流程 -----------------
-def train_region_classifier(laheart_root, patch_size=16, batch_size=32, epochs=10, lr=1e-3, save_name='region_classifier_unet.pth'):
+def train_region_classifier(laheart_root, patch_size=16, batch_size=32, epochs=10, lr=1e-3,
+                            save_name='region_classifier_unet.pth', boundary_weight=0.85):
     dataset = PatchRegionDataset(laheart_root, split='train', patch_size=patch_size)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     model = UNet3D_Region(in_ch=1, base_ch=16).cuda()
+
+    # 统计类别数量
+    labels = [label for _, label in dataset.samples]
+    n_core = sum(np.array(labels) == 0)
+    n_edge = sum(np.array(labels) == 1)
+    pos_weight = torch.tensor([n_core / (n_edge + 1e-6)]).cuda()
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn = nn.BCEWithLogitsLoss()
+
     model.train()
     for epoch in range(epochs):
         total, correct, total_loss = 0, 0, 0
-        for patches, labels in tqdm(loader, desc=f"Epoch {epoch+1}/{epochs}"):
+        for patches, labels in tqdm(loader, desc=f"Epoch {epoch + 1}/{epochs}"):
             patches, labels = patches.cuda(), labels.cuda()
             logits = model(patches)
-            loss = loss_fn(logits, labels)
+            # 主损失
+            loss_main = loss_fn(logits, labels)
+            # 边界损失（只对label==1样本）
+            edge_mask = (labels == 1)
+            if edge_mask.any():
+                edge_logits = logits[edge_mask]
+                edge_labels = labels[edge_mask]
+                loss_edge = loss_fn(edge_logits, edge_labels)
+                loss = loss_main + boundary_weight * loss_edge
+            else:
+                loss = loss_main
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -147,13 +166,13 @@ def train_region_classifier(laheart_root, patch_size=16, batch_size=32, epochs=1
             correct += (preds == labels).sum().item()
             total += labels.size(0)
             total_loss += loss.item() * labels.size(0)
-        print(f'Epoch {epoch+1}/{epochs}, Loss: {total_loss/total:.4f}, Acc: {correct/total:.4f}')
+        print(f'Epoch {epoch + 1}/{epochs}, Loss: {total_loss / total:.4f}, Acc: {correct / total:.4f}')
     torch.save(model.state_dict(), save_name)
     print(f"Model saved to {save_name}")
     return model
 # ----------------- 测试主流程 -----------------
 class PatchRegionDatasetTest(Dataset):
-    def __init__(self, laheart_root, split='test', patch_size=16, edge_kernel=3, edge_thresh=0.2, core_thresh=0.5, max_num=None):
+    def __init__(self, laheart_root, split='test', patch_size=16, edge_kernel=3, edge_thresh=0.14, core_thresh=0.6, max_num=None):
         self.samples = []
         dataset = LAHeart(base_dir=laheart_root, split=split, num=max_num)
         for i in tqdm(range(len(dataset)), desc="Preparing region test dataset"):
@@ -205,6 +224,6 @@ def test_region_classifier(laheart_root, model_path, patch_size=16, batch_size=3
 # --------- 用法示例 ----------
 if __name__ == '__main__':
     laheart_root = '/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/'
-    train_region_classifier(laheart_root, patch_size=16, batch_size=32, epochs=20, lr=1e-3)
+    train_region_classifier(laheart_root, patch_size=16, batch_size=32, epochs=35, lr=1e-3)
     model_path = 'region_classifier_unet.pth'  # 训练保存的模型路径
     test_region_classifier(laheart_root, model_path, patch_size=16, batch_size=32)

@@ -208,7 +208,7 @@ if __name__ == "__main__":
 
     # ================= MPL控制器、元控制器和增强控制器初始化 =================
     mpl_controller = MPLController(T=10, alpha=0.95)  # 初始化MPL控制器
-    meta_controller = MetaAugController(num_aug=8,init_temp=0.6,init_weights=[0.125, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125,0.125]).cuda()
+    meta_controller = MetaAugController(num_aug=6,init_temp=0.6,init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
     # ================= 增强策略及数据加载 =================
     labeled_aug_in = transforms.Compose([

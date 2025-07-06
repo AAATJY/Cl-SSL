@@ -115,15 +115,11 @@ class AugmentationFactory:
     def get_strong_weighted_augs():
         return [
             GaussianBlur(sigma_range=(1.0, 2.0)),
-            # RandomOcclusion(max_occlusion_size=48),
-            RandomOcclusion(max_occlusion_size=64),
             GammaCorrection(gamma_range=(0.5, 2.5)),
-            # LocalShuffle(max_ratio=0.2, block_size=16),
-            MotionArtifact(max_lines=8),
+            LocalShuffle(max_ratio=0.2, block_size=16),
             EdgeEnhancement(),
             RandomNoise(sigma=0.2),
-            CutMix3D(beta=1.0, prob=0.5),  # 新增CutMix
-            MixUp3D(alpha=0.4, prob=0.5),  # 新增MixUp
+            ContrastAdjust(factor_range=(0.8, 1.2)),
         ]
 
 

@@ -26,7 +26,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_version1 import VNet
+from networks.vnet_cl import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -36,9 +36,6 @@ class AugmentationController:
         self.max_iter = max_iter
         # 新增动态增强参数
         self.current_strength = 0.1  # 初始增强强度
-
-    def get_alpha(self):
-        return min(self.iter / (self.max_iter // 2), 1.0)
 
     def get_strength(self):
         """动态增强强度"""
@@ -123,6 +120,11 @@ parser.add_argument('--mc_dropout_rate', type=float, default=0.2, help='MC Dropo
 parser.add_argument('--meta_grad_scale', type=float, default=0.1, help='元梯度缩放系数')
 parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪阈值')
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
+# 新增对比学习参数
+parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
+parser.add_argument('--contrast_start_iter', type=int, default=2000, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
+parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 args = parser.parse_args()
 
 train_data_path = args.root_path

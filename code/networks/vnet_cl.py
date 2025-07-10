@@ -322,6 +322,27 @@ class VNet(nn.Module):
             self.mc_dropout_layers = nn.ModuleList([
                 nn.Dropout3d(p=mc_dropout_rate) for _ in range(4)  # 在4个关键位置添加
             ])
+        # ========== 新增对比学习组件 ==========
+        # 特征提取器（使用编码器最后一层特征）
+        self.contrast_feat_extractor = nn.Sequential(
+            nn.AdaptiveAvgPool3d(1),
+            nn.Flatten(),
+            nn.Linear(n_filters * 16, 128)  # 假设最终特征维度128
+        )
+
+        # 区域感知对比学习模块
+        self.contrast_learner = RegionAwareContrastiveLearning(
+            feat_dim=128,
+            patch_size=16,  # 可根据实际调整
+            temp=0.1
+        )
+
+        # 用于对比学习的额外投影头
+        self.contrast_projector = nn.Sequential(
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64)
+        )
 
 
     def encoder(self, input):
@@ -385,7 +406,7 @@ class VNet(nn.Module):
         out = self.out_conv(x9)
         return out
 
-    def forward(self, input, turnoff_drop=False, enable_dropout=True):
+    def forward(self, input, turnoff_drop=False, enable_dropout=True, return_contrast_feats=True):
         if turnoff_drop:
             has_dropout = self.has_dropout
             self.has_dropout = False
@@ -393,8 +414,23 @@ class VNet(nn.Module):
         # MC Dropout特殊处理
         if self.mc_dropout and enable_dropout:
             self.train()  # 强制保持训练模式
-        features = self.encoder(input)
-        out = self.decoder(features)
+
+        # 编码器特征
+        enc_features = self.encoder(input)
+
+        # 对比学习特征 (使用编码器最后一层特征)
+        contrast_feats = self.contrast_feat_extractor(enc_features[-1])
+
+        # 解码器特征
+        dec_features = self.decoder(enc_features)
+
+        # 分割输出
+        seg_out = self.out_conv(dec_features)
+
         if turnoff_drop:
             self.has_dropout = has_dropout
-        return out
+
+        if return_contrast_feats:
+            return seg_out, contrast_feats
+        else:
+            return seg_out

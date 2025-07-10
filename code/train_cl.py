@@ -5,7 +5,7 @@
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -101,7 +101,7 @@ class MPLController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_version1_4_1_1', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cl', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=10000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -287,20 +287,14 @@ if __name__ == "__main__":
             current_strength = aug_controller.get_strength()  # 获取当前增强强度
             time2 = time.time()
             # ================= 数据准备 =================
+            weak_volume_batch = sampled_batch['image'].cuda()
             sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in,meta_controller)
+            strong_volume_batch = sampled_batch['image'].cuda()
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
             unlabeled_volume_batch = volume_batch[labeled_bs:]
 
-            # ========== 新增：为对比学习准备增强视图 ==========
-            with torch.no_grad():
-                # 弱增强视图
-                weak_aug_batch = batch_aug_wrapper(sampled_batch, labeled_aug_weak, unlabeled_aug_in, None)
-                weak_volume_batch = weak_aug_batch['image'].cuda()
 
-                # 强增强视图
-                strong_aug_batch = batch_aug_wrapper(sampled_batch, labeled_aug_strong, unlabeled_aug_in, None)
-                strong_volume_batch = strong_aug_batch['image'].cuda()
 
             # ========== 阶段1：教师模型生成伪标签 ==========
             with torch.no_grad():

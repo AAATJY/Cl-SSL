@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -34,8 +34,8 @@ class LabeledPatchRegionDataset(Dataset):
         crop_size=(112, 112, 80),  # 大patch
         patch_size=(16, 16, 16),   # 小patch
         edge_kernel=3,
-        edge_thresh=0.15,
-        core_thresh=0.5,
+        edge_thresh=0.09,
+        core_thresh=0.45,
         max_num=None,
         patches_per_volume=32
     ):
@@ -114,7 +114,7 @@ def train_region_classifier_with_aug(
         laheart_root, split='train', crop_size=crop_size, patch_size=patch_size
     )
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    model = UNet3D_Region(in_ch=1, base_ch=16).cuda()
+    model = UNet3D_Region(in_ch=1, base_ch=32).cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.BCEWithLogitsLoss()
     model.train()
@@ -149,7 +149,7 @@ def test_region_classifier_with_aug(
     )
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = UNet3D_Region(in_ch=1, base_ch=16).to(device)
+    model = UNet3D_Region(in_ch=1, base_ch=32).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     all_labels = []
@@ -180,7 +180,7 @@ if __name__ == '__main__':
         crop_size=(112, 112, 80),
         patch_size=(16, 16, 16),
         batch_size=32,
-        epochs=20,
+        epochs=30,
         lr=1e-3,
         save_name='region_classifier_with_aug.pth'
     )

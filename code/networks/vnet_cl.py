@@ -1,147 +1,130 @@
-from torch import nn
 import torch
 import torch.nn.functional as F
-
+from torch import nn
 
 class RegionAwareContrastiveLearning(nn.Module):
     def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.25):
-        """
-        端到端区域感知对比学习模块
-        :param feat_dim: 特征维度
-        :param temp: 温度参数
-        :param patch_size: 补丁大小
-        :param edge_threshold: 边缘判定阈值
-        """
         super().__init__()
         self.temp = temp
         self.patch_size = patch_size
         self.edge_threshold = edge_threshold
-
-        # 区域分类器 (轻量级)
         self.region_classifier = nn.Sequential(
             nn.Conv3d(feat_dim, 32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv3d(32, 1, kernel_size=1),
             nn.Sigmoid()
         )
-
-        # 共享投影头
         self.projector = nn.Sequential(
             nn.Linear(feat_dim, feat_dim),
             nn.ReLU(),
             nn.Linear(feat_dim, 64)
         )
-
-        # 损失权重
         self.register_buffer('loss_weights', torch.tensor([1.0, 0.7]))  # [patch, voxel]
 
     def forward(self, anchor_feats, positive_feats, labels=None):
         """
-        :param anchor_feats: 锚点特征 [B, C, D, H, W]
-        :param positive_feats: 正样本特征 [B, C, D, H, W]
-        :param labels: 标签图 [B, D, H, W] (可选)
+        anchor_feats/positive_feats: [B, C, D, H, W]
         """
         B, C, D, H, W = anchor_feats.shape
-
-        # 1. 区域分类
-        region_probs = self.region_classifier(anchor_feats)  # [B, 1, D, H, W]
+        region_probs = self.region_classifier(anchor_feats)
         region_mask = (region_probs > self.edge_threshold).float()
-
-        # 2. 补丁划分
-        anchor_patches = self._split_into_patches(anchor_feats)  # [B, N_p, C, P_d, P_h, P_w]
+        anchor_patches = self._split_into_patches(anchor_feats)
         positive_patches = self._split_into_patches(positive_feats)
         region_patches = self._split_into_patches(region_mask)
 
-        # 3. 初始化损失
         patch_loss = 0
         voxel_loss = 0
-        valid_count = 0
+        valid_count_patch = 0
+        valid_count_voxel = 0
 
-        # 4. 遍历所有补丁
+        # 批量处理所有patch
         for b in range(B):
+            edge_ratios = region_patches[b].mean(dim=(2, 3, 4))
             for p_idx in range(anchor_patches.size(1)):
-                anchor_patch = anchor_patches[b, p_idx]  # [C, P_d, P_h, P_w]
+                anchor_patch = anchor_patches[b, p_idx]
                 positive_patch = positive_patches[b, p_idx]
-                region_patch = region_patches[b, p_idx]  # [1, P_d, P_h, P_w]
-
-                # 计算补丁区域类型 (边缘占比)
-                edge_ratio = region_patch.mean()
-
-                if edge_ratio > 0.6:  # 边缘区域 - 体素级对比
-                    loss = self._voxel_level_contrast(anchor_patch, positive_patch)
-                    voxel_loss += loss
-                elif edge_ratio < 0.4:  # 核心区域 - 补丁级对比
-                    loss = self._patch_level_contrast(anchor_patch, positive_patch)
-                    patch_loss += loss
-                else:  # 过渡区域 - 跳过
+                edge_ratio = edge_ratios[p_idx].item()
+                if edge_ratio > 0.6:
+                    # 体素级InfoNCE
+                    voxel_loss += self._voxel_level_contrast_batch(anchor_patch, positive_patch)
+                    valid_count_voxel += 1
+                elif edge_ratio < 0.4:
+                    patch_loss += self._patch_level_contrast_batch(anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx)
+                    valid_count_patch += 1
+                else:
                     continue
 
-                valid_count += 1
-
-        if valid_count == 0:
-            return 0
-
-        # 5. 加权损失
-        total_loss = (self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss) / valid_count
+        patch_loss = patch_loss / max(1, valid_count_patch)
+        voxel_loss = voxel_loss / max(1, valid_count_voxel)
+        total_loss = self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss
         return total_loss
 
     def _split_into_patches(self, feats):
-        """将特征图分割为补丁"""
         B, C, D, H, W = feats.shape
         P_d, P_h, P_w = self.patch_size, self.patch_size, self.patch_size
-
-        # 确保尺寸可整除
         assert D % P_d == 0 and H % P_h == 0 and W % P_w == 0
-
-        # 展开为补丁
         patches = feats.unfold(2, P_d, P_d).unfold(3, P_h, P_h).unfold(4, P_w, P_w)
         patches = patches.contiguous().view(B, -1, C, P_d, P_h, P_w)
         return patches
 
-    def _patch_level_contrast(self, anchor_patch, positive_patch):
-        """补丁级对比学习"""
-        # 全局平均池化
-        anchor_vec = F.adaptive_avg_pool3d(anchor_patch, 1).flatten()  # [C]
-        positive_vec = F.adaptive_avg_pool3d(positive_patch, 1).flatten()
+    def _patch_level_contrast_batch(self, anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx):
+        # 所有patch全局平均池化，批量对比
+        B, N, C, P_d, P_h, P_w = anchor_patches.shape
+        anchor_vec = F.adaptive_avg_pool3d(anchor_patch.unsqueeze(0), 1).squeeze().flatten(0)
+        positive_vec = F.adaptive_avg_pool3d(positive_patch.unsqueeze(0), 1).squeeze().flatten(0)
 
-        # 投影
-        anchor_proj = self.projector(anchor_vec)  # [64]
-        positive_proj = self.projector(positive_vec)
+        # 负样本：同batch其它patch
+        negatives = []
+        for bb in range(B):
+            for pp in range(anchor_patches.size(1)):
+                if bb == b and pp == p_idx:
+                    continue
+                neg_patch = anchor_patches[bb, pp]
+                neg_vec = F.adaptive_avg_pool3d(neg_patch.unsqueeze(0), 1).squeeze().flatten(0)
+                negatives.append(neg_vec)
+        if not negatives:
+            return torch.tensor(0.0, device=anchor_patch.device)
+        negatives = torch.stack(negatives, dim=0)
 
-        # 归一化
+        anchor_proj = self.projector(anchor_vec)
+        pos_proj = self.projector(positive_vec)
+        neg_proj = self.projector(negatives)  # [N_neg, 64]
+
         anchor_proj = F.normalize(anchor_proj, dim=0)
-        positive_proj = F.normalize(positive_proj, dim=0)
+        pos_proj = F.normalize(pos_proj, dim=0)
+        neg_proj = F.normalize(neg_proj, dim=1)
 
-        # 计算相似度
-        logits = torch.dot(anchor_proj, positive_proj) / self.temp
-        return -logits  # 最大化相似度
+        # logits: [1 + N_neg]
+        logits = torch.cat([torch.dot(anchor_proj, pos_proj).unsqueeze(0), torch.mv(neg_proj, anchor_proj)], dim=0)
+        logits = logits / self.temp
+        labels = torch.zeros(logits.shape[0], dtype=torch.long, device=anchor_proj.device)
+        labels[0] = 1  # 第一个是正样本
 
-    def _voxel_level_contrast(self, anchor_patch, positive_patch):
-        """体素级对比学习 (优化版)"""
-        # 展平体素
-        anchor_voxels = anchor_patch.flatten(1).permute(1, 0)  # [N_vox, C]
-        positive_voxels = positive_patch.flatten(1).permute(1, 0)
+        # InfoNCE损失
+        loss = -F.log_softmax(logits, dim=0)[0]
+        return loss
 
-        # 随机采样部分体素以节省计算 (最多100个体素)
+    def _voxel_level_contrast_batch(self, anchor_patch, positive_patch):
+        # 扁平所有体素，[C, N]
+        anchor_voxels = anchor_patch.view(anchor_patch.size(0), -1).t()
+        positive_voxels = positive_patch.view(positive_patch.size(0), -1).t()
+        # 只对齐前min(100, N)个体素
         num_voxels = anchor_voxels.size(0)
         sample_size = min(100, num_voxels)
         if num_voxels > sample_size:
-            indices = torch.randperm(num_voxels)[:sample_size]
-            anchor_voxels = anchor_voxels[indices]
-            positive_voxels = positive_voxels[indices]
-
-        # 投影和归一化
+            idxs = torch.randperm(num_voxels)[:sample_size]
+            anchor_voxels = anchor_voxels[idxs]
+            positive_voxels = positive_voxels[idxs]
+        # 投影
         anchor_proj = self.projector(anchor_voxels)
-        positive_proj = self.projector(positive_voxels)
+        pos_proj = self.projector(positive_voxels)
         anchor_proj = F.normalize(anchor_proj, dim=1)
-        positive_proj = F.normalize(positive_proj, dim=1)
-
-        # 计算相似度矩阵
-        sim_matrix = torch.mm(anchor_proj, positive_proj.t()) / self.temp
-
-        # 对角线为正样本
-        labels = torch.arange(sim_matrix.size(0), device=sim_matrix.device)
-        return F.cross_entropy(sim_matrix, labels)
+        pos_proj = F.normalize(pos_proj, dim=1)
+        # negatives: 所有体素互为负样本
+        logits = torch.mm(anchor_proj, pos_proj.t()) / self.temp
+        labels = torch.arange(logits.size(0), device=logits.device)
+        loss = F.cross_entropy(logits, labels)
+        return loss
 
 class ConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):

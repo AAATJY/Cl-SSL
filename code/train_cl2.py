@@ -26,7 +26,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_cl import VNet
+from networks.vnet_cl2 import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -101,7 +101,7 @@ class MPLController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cl', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cl2', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=10000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -369,35 +369,34 @@ if __name__ == "__main__":
             # ========== 新增：对比学习损失 ==========
             contrast_loss = 0
             if contrast_enabled:
-                # 为每个样本计算对比损失
                 for i in range(volume_batch.size(0)):
                     anchor_feat = weak_contrast_feats[i].unsqueeze(0)  # [1, C]
                     positive_feat = strong_contrast_feats[i].unsqueeze(0)  # [1, C]
 
-                    # 获取标签信息
+                    # ========== 关键重构：体素级对比只用高置信度 ==========
                     if i < labeled_bs:  # 有标签样本
-                        label_map = label_batch[i].unsqueeze(0)  # 添加batch维度
+                        label_map = label_batch[i].unsqueeze(0)  # [1, D, H, W]
+                        label_probs = torch.ones_like(label_map, dtype=torch.float32)  # 全mask
                     else:  # 无标签样本
-                        # 使用教师模型生成的伪标签
-                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0)
+                        # 伪标签及其最大概率（置信度）
+                        class_probs = probs[i - labeled_bs]  # [num_classes, D, H, W]
+                        pseudo_label = torch.argmax(class_probs, dim=0).unsqueeze(0)  # [1, D, H, W]
+                        pseudo_prob = torch.max(class_probs, dim=0)[0].unsqueeze(0)  # [1, D, H, W]
                         label_map = pseudo_label
+                        label_probs = pseudo_prob
 
-                    # 计算对比损失
+                    # 传入对比学习模块（体素级用mask）
                     contrast_loss += student_model.contrast_learner(
-                        anchor_feat.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1),  # 添加空间维度 [1, C, 1, 1, 1]
-                        positive_feat.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1),  # 添加空间维度
-                        label_map
+                        anchor_feat.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1),
+                        positive_feat.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1),
+                        pseudo_labels=label_map,
+                        pseudo_probs=label_probs,
                     )
-
-                # 平均对比损失
                 contrast_loss = contrast_loss / volume_batch.size(0)
-
-                # 动态调整对比损失权重
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss
             else:
                 weighted_contrast_loss = 0
-
 
             # 学生反向传播（带梯度裁剪）
             student_loss = supervised_loss + consistency_loss + weighted_contrast_loss

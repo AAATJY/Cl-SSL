@@ -3,11 +3,12 @@ import torch.nn.functional as F
 from torch import nn
 
 class RegionAwareContrastiveLearning(nn.Module):
-    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.25):
+    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.25, conf_thresh=0.7):
         super().__init__()
         self.temp = temp
         self.patch_size = patch_size
         self.edge_threshold = edge_threshold
+        self.conf_thresh = conf_thresh  # 新增置信度阈值
         self.region_classifier = nn.Sequential(
             nn.Conv3d(feat_dim, 32, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -21,9 +22,12 @@ class RegionAwareContrastiveLearning(nn.Module):
         )
         self.register_buffer('loss_weights', torch.tensor([1.0, 0.7]))  # [patch, voxel]
 
-    def forward(self, anchor_feats, positive_feats, labels=None):
+    def forward(self, anchor_feats, positive_feats, labels=None, pseudo_labels=None, pseudo_probs=None):
         """
         anchor_feats/positive_feats: [B, C, D, H, W]
+        labels: [B, D, H, W] (真实标签或伪标签)
+        pseudo_labels: [B, D, H, W] (伪标签, 用于无标签样本)
+        pseudo_probs: [B, D, H, W] (伪标签置信度, 用于筛选高置信度体素)
         """
         B, C, D, H, W = anchor_feats.shape
         region_probs = self.region_classifier(anchor_feats)
@@ -45,8 +49,19 @@ class RegionAwareContrastiveLearning(nn.Module):
                 positive_patch = positive_patches[b, p_idx]
                 edge_ratio = edge_ratios[p_idx].item()
                 if edge_ratio > 0.6:
-                    # 体素级InfoNCE
-                    voxel_loss += self._voxel_level_contrast_batch(anchor_patch, positive_patch)
+                    # --------- 体素级对比，增加RCPS掩码思想 -----------
+                    if pseudo_labels is not None and pseudo_probs is not None:
+                        # 提取当前patch对应的伪标签和置信度
+                        patch_coords = self._get_patch_coords(p_idx, anchor_feats.shape[2:], self.patch_size)
+                        pl = pseudo_labels[b][patch_coords]
+                        pp = pseudo_probs[b][patch_coords]
+                        mask = (pp > self.conf_thresh)
+                    else:
+                        pl = None
+                        mask = None
+                    voxel_loss += self._voxel_level_contrast_batch(
+                        anchor_patch, positive_patch, mask=mask
+                    )
                     valid_count_voxel += 1
                 elif edge_ratio < 0.4:
                     patch_loss += self._patch_level_contrast_batch(anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx)
@@ -67,13 +82,27 @@ class RegionAwareContrastiveLearning(nn.Module):
         patches = patches.contiguous().view(B, -1, C, P_d, P_h, P_w)
         return patches
 
+    def _get_patch_coords(self, patch_idx, vol_shape, patch_size):
+        # 计算patch内体素的全局索引
+        D, H, W = vol_shape
+        P_d, P_h, P_w = patch_size, patch_size, patch_size
+        n_patches_d = D // P_d
+        n_patches_h = H // P_h
+        n_patches_w = W // P_w
+        pd = patch_idx // (n_patches_h * n_patches_w)
+        phw = patch_idx % (n_patches_h * n_patches_w)
+        ph = phw // n_patches_w
+        pw = phw % n_patches_w
+        d_slice = slice(pd * P_d, (pd + 1) * P_d)
+        h_slice = slice(ph * P_h, (ph + 1) * P_h)
+        w_slice = slice(pw * P_w, (pw + 1) * P_w)
+        return (d_slice, h_slice, w_slice)
+
     def _patch_level_contrast_batch(self, anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx):
-        # 所有patch全局平均池化，批量对比
+        # 原有实现完全不变
         B, N, C, P_d, P_h, P_w = anchor_patches.shape
         anchor_vec = F.adaptive_avg_pool3d(anchor_patch.unsqueeze(0), 1).squeeze().flatten(0)
         positive_vec = F.adaptive_avg_pool3d(positive_patch.unsqueeze(0), 1).squeeze().flatten(0)
-
-        # 负样本：同batch其它patch
         negatives = []
         for bb in range(B):
             for pp in range(anchor_patches.size(1)):
@@ -85,42 +114,40 @@ class RegionAwareContrastiveLearning(nn.Module):
         if not negatives:
             return torch.tensor(0.0, device=anchor_patch.device)
         negatives = torch.stack(negatives, dim=0)
-
         anchor_proj = self.projector(anchor_vec)
         pos_proj = self.projector(positive_vec)
         neg_proj = self.projector(negatives)  # [N_neg, 64]
-
         anchor_proj = F.normalize(anchor_proj, dim=0)
         pos_proj = F.normalize(pos_proj, dim=0)
         neg_proj = F.normalize(neg_proj, dim=1)
-
-        # logits: [1 + N_neg]
         logits = torch.cat([torch.dot(anchor_proj, pos_proj).unsqueeze(0), torch.mv(neg_proj, anchor_proj)], dim=0)
         logits = logits / self.temp
         labels = torch.zeros(logits.shape[0], dtype=torch.long, device=anchor_proj.device)
         labels[0] = 1  # 第一个是正样本
-
-        # InfoNCE损失
         loss = -F.log_softmax(logits, dim=0)[0]
         return loss
 
-    def _voxel_level_contrast_batch(self, anchor_patch, positive_patch):
-        # 扁平所有体素，[C, N]
-        anchor_voxels = anchor_patch.view(anchor_patch.size(0), -1).t()
-        positive_voxels = positive_patch.view(positive_patch.size(0), -1).t()
-        # 只对齐前min(100, N)个体素
+    def _voxel_level_contrast_batch(self, anchor_patch, positive_patch, mask=None):
+        # [C, D, H, W] => [N, C]
+        anchor_voxels = anchor_patch.view(anchor_patch.size(0), -1).t()  # [N, C]
+        positive_voxels = positive_patch.view(positive_patch.size(0), -1).t()  # [N, C]
+        if mask is not None:
+            mask = mask.flatten()
+            valid_idx = mask.nonzero(as_tuple=False).squeeze(-1)
+            if valid_idx.numel() == 0:
+                return torch.tensor(0.0, device=anchor_patch.device)
+            anchor_voxels = anchor_voxels[valid_idx]
+            positive_voxels = positive_voxels[valid_idx]
         num_voxels = anchor_voxels.size(0)
         sample_size = min(100, num_voxels)
         if num_voxels > sample_size:
-            idxs = torch.randperm(num_voxels)[:sample_size]
+            idxs = torch.randperm(num_voxels, device=anchor_voxels.device)[:sample_size]
             anchor_voxels = anchor_voxels[idxs]
             positive_voxels = positive_voxels[idxs]
-        # 投影
         anchor_proj = self.projector(anchor_voxels)
         pos_proj = self.projector(positive_voxels)
         anchor_proj = F.normalize(anchor_proj, dim=1)
         pos_proj = F.normalize(pos_proj, dim=1)
-        # negatives: 所有体素互为负样本
         logits = torch.mm(anchor_proj, pos_proj.t()) / self.temp
         labels = torch.arange(logits.size(0), device=logits.device)
         loss = F.cross_entropy(logits, labels)

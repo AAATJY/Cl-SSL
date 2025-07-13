@@ -14,7 +14,7 @@ parser.add_argument('--model', type=str, default='train_version1_6', help='Model
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',
-                    choices=['student', 'teacher', 'ema'], help='Which model to test')
+                    choices=['student', 'teacher', 'contrast_learner'], help='Which model to test')
 ##### MPL MOD END
 FLAGS = parser.parse_args()
 
@@ -45,7 +45,7 @@ def test_calculate_metric(epoch_num):
     elif FLAGS.test_mode == 'teacher':
         net.load_state_dict(checkpoint['teacher'])
     else:  # ema
-        net.load_state_dict(checkpoint['ema'])
+        net.load_state_dict(checkpoint['contrast_learner'])
 
     print("Loaded {} model weights from {}".format(FLAGS.test_mode, save_mode_path))
     net.eval()

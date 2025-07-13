@@ -5,7 +5,7 @@
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -103,8 +103,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 parser.add_argument('--exp', type=str, default='train_cl', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=10000, help='maximum epoch number to train')
-parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
-parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
+parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
+parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
 parser.add_argument('--base_lr', type=float, default=0.01, help='maximum epoch number to train')
 parser.add_argument('--deterministic', type=int, default=1, help='whether use deterministic training')
 parser.add_argument('--seed', type=int, default=1337, help='random seed')
@@ -122,7 +122,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=2000, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=1, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 args = parser.parse_args()
@@ -367,37 +367,37 @@ if __name__ == "__main__":
             masked_consistency = weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1)
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
             # ========== 新增：对比学习损失 ==========
+            # 获取空间特征而不是池化后的向量
+            _, _, weak_spatial_feats = student_model(weak_volume_batch, return_encoder_feats=True)
+            _, _, strong_spatial_feats = student_model(strong_volume_batch, return_encoder_feats=True)
+
+            # 对每个样本计算对比损失
             contrast_loss = 0
             if contrast_enabled:
-                # 为每个样本计算对比损失
                 for i in range(volume_batch.size(0)):
-                    anchor_feat = weak_contrast_feats[i].unsqueeze(0)  # [1, C]
-                    positive_feat = strong_contrast_feats[i].unsqueeze(0)  # [1, C]
+                    # 获取空间特征 [1, C, D, H, W]，这样才能切分补丁
+                    anchor_feat = weak_spatial_feats[i].unsqueeze(0)
+                    positive_feat = strong_spatial_feats[i].unsqueeze(0)
 
-                    # 获取标签信息
+                    # 获取标签信息（可选，如果你的RegionAwareContrastiveLearning forward用不到labels可以不传）
                     if i < labeled_bs:  # 有标签样本
-                        label_map = label_batch[i].unsqueeze(0)  # 添加batch维度
+                        label_map = label_batch[i].unsqueeze(0)
                     else:  # 无标签样本
-                        # 使用教师模型生成的伪标签
                         pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0)
                         label_map = pseudo_label
 
-                    # 计算对比损失
+                    # 调用对比学习
                     contrast_loss += student_model.contrast_learner(
-                        anchor_feat.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1),  # 添加空间维度 [1, C, 1, 1, 1]
-                        positive_feat.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1),  # 添加空间维度
+                        anchor_feat,
+                        positive_feat,
                         label_map
                     )
 
-                # 平均对比损失
                 contrast_loss = contrast_loss / volume_batch.size(0)
-
-                # 动态调整对比损失权重
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss
             else:
                 weighted_contrast_loss = 0
-
 
             # 学生反向传播（带梯度裁剪）
             student_loss = supervised_loss + consistency_loss + weighted_contrast_loss

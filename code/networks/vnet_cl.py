@@ -62,7 +62,16 @@ class RegionAwareContrastiveLearning(nn.Module):
     def _split_into_patches(self, feats):
         B, C, D, H, W = feats.shape
         P_d, P_h, P_w = self.patch_size, self.patch_size, self.patch_size
-        assert D % P_d == 0 and H % P_h == 0 and W % P_w == 0
+
+        # 修正：自动补零padding到能够整除patch_size
+        pad_d = (P_d - D % P_d) % P_d
+        pad_h = (P_h - H % P_h) % P_h
+        pad_w = (P_w - W % P_w) % P_w
+        if pad_d or pad_h or pad_w:
+            # F.pad的顺序是最后一个维度开始：[W, H, D]
+            feats = F.pad(feats, (0, pad_w, 0, pad_h, 0, pad_d))
+            D, H, W = feats.shape[-3:]
+
         patches = feats.unfold(2, P_d, P_d).unfold(3, P_h, P_h).unfold(4, P_w, P_w)
         patches = patches.contiguous().view(B, -1, C, P_d, P_h, P_w)
         return patches
@@ -97,10 +106,7 @@ class RegionAwareContrastiveLearning(nn.Module):
         # logits: [1 + N_neg]
         logits = torch.cat([torch.dot(anchor_proj, pos_proj).unsqueeze(0), torch.mv(neg_proj, anchor_proj)], dim=0)
         logits = logits / self.temp
-        labels = torch.zeros(logits.shape[0], dtype=torch.long, device=anchor_proj.device)
-        labels[0] = 1  # 第一个是正样本
-
-        # InfoNCE损失
+        # 目标索引必须为0（第一个是正样本）
         loss = -F.log_softmax(logits, dim=0)[0]
         return loss
 
@@ -387,7 +393,7 @@ class VNet(nn.Module):
             x9 = self.dropout(x9)
         return x9
 
-    def forward(self, input, turnoff_drop=False, enable_dropout=True, return_contrast_feats=True):
+    def forward(self, input, turnoff_drop=False, enable_dropout=True, return_contrast_feats=True, return_encoder_feats=False):
         if turnoff_drop:
             has_dropout = self.has_dropout
             self.has_dropout = False
@@ -411,7 +417,9 @@ class VNet(nn.Module):
         if turnoff_drop:
             self.has_dropout = has_dropout
 
-        if return_contrast_feats:
+        if return_encoder_feats:
+            return seg_out, contrast_feats, enc_features[-1]  # 返回空间特征
+        elif return_contrast_feats:
             return seg_out, contrast_feats
         else:
             return seg_out

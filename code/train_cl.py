@@ -5,7 +5,7 @@
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -102,9 +102,9 @@ class MPLController:
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 parser.add_argument('--exp', type=str, default='train_cl', help='model_name')
-parser.add_argument('--max_iterations', type=int, default=10000, help='maximum epoch number to train')
-parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
-parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
+parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
+parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
+parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
 parser.add_argument('--base_lr', type=float, default=0.01, help='maximum epoch number to train')
 parser.add_argument('--deterministic', type=int, default=1, help='whether use deterministic training')
 parser.add_argument('--seed', type=int, default=1337, help='random seed')
@@ -122,7 +122,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=1, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=2000, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 args = parser.parse_args()
@@ -398,6 +398,8 @@ if __name__ == "__main__":
                 weighted_contrast_loss = contrast_weight * contrast_loss
             else:
                 weighted_contrast_loss = 0
+
+
 
             # 学生反向传播（带梯度裁剪）
             student_loss = supervised_loss + consistency_loss + weighted_contrast_loss

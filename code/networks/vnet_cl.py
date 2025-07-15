@@ -321,10 +321,10 @@ class VNet(nn.Module):
 
         # 区域感知对比学习模块
         self.contrast_learner = RegionAwareContrastiveLearning(
-            feat_dim=128,
-            patch_size=16,  # 可根据实际调整
+            feat_dim=n_filters * 16,  # 即256
+            patch_size=16,
             temp=0.1
-        )
+)
 
         # 用于对比学习的额外投影头
         self.contrast_projector = nn.Sequential(

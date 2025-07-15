@@ -400,8 +400,6 @@ if __name__ == "__main__":
             else:
                 weighted_contrast_loss = 0
 
-
-
             # 学生反向传播（带梯度裁剪）
             student_loss = supervised_loss + consistency_loss + weighted_contrast_loss
             student_optimizer.zero_grad()

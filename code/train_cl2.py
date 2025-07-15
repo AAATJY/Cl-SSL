@@ -5,7 +5,7 @@
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -26,7 +26,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_cl2 import VNet
+from networks.vnet_cl import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -101,8 +101,8 @@ class MPLController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cl2', help='model_name')
-parser.add_argument('--max_iterations', type=int, default=10000, help='maximum epoch number to train')
+parser.add_argument('--exp', type=str, default='train_cl', help='model_name')
+parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
 parser.add_argument('--base_lr', type=float, default=0.01, help='maximum epoch number to train')
@@ -366,37 +366,41 @@ if __name__ == "__main__":
             weighted_loss = consistency_dist * mask  # 逐样本加权
             masked_consistency = weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1)
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
-            # ========== 新增：对比学习损失 ==========
+            # ================= 新增：对比学习损失 =================
+            _, _, weak_spatial_feats = student_model(weak_volume_batch, return_encoder_feats=True)
+            _, _, strong_spatial_feats = student_model(strong_volume_batch, return_encoder_feats=True)
+
             contrast_loss = 0
             if contrast_enabled:
                 for i in range(volume_batch.size(0)):
-                    anchor_feat = weak_contrast_feats[i].unsqueeze(0)  # [1, C]
-                    positive_feat = strong_contrast_feats[i].unsqueeze(0)  # [1, C]
+                    anchor_feat = weak_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
+                    positive_feat = strong_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
 
-                    # ========== 关键重构：体素级对比只用高置信度 ==========
-                    if i < labeled_bs:  # 有标签样本
+                    # 有标签样本（label_batch有GT标签）
+                    if i < labeled_bs:
                         label_map = label_batch[i].unsqueeze(0)  # [1, D, H, W]
-                        label_probs = torch.ones_like(label_map, dtype=torch.float32)  # 全mask
-                    else:  # 无标签样本
-                        # 伪标签及其最大概率（置信度）
-                        class_probs = probs[i - labeled_bs]  # [num_classes, D, H, W]
-                        pseudo_label = torch.argmax(class_probs, dim=0).unsqueeze(0)  # [1, D, H, W]
-                        pseudo_prob = torch.max(class_probs, dim=0)[0].unsqueeze(0)  # [1, D, H, W]
+                        prob_map = None
+                    else:
+                        # 无标签样本（伪标签概率和类别）
+                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0)  # [1, D, H, W]
+                        prob_map = max_probs[i - labeled_bs].unsqueeze(0)  # [1, D, H, W]，也可传类别概率
                         label_map = pseudo_label
-                        label_probs = pseudo_prob
 
-                    # 传入对比学习模块（体素级用mask）
+                    # 体素对比学习结合RCPS筛选
                     contrast_loss += student_model.contrast_learner(
-                        anchor_feat.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1),
-                        positive_feat.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1),
-                        pseudo_labels=label_map,
-                        pseudo_probs=label_probs,
+                        anchor_feat,
+                        positive_feat,
+                        labels=label_map,
+                        prob_maps=prob_map
                     )
+
                 contrast_loss = contrast_loss / volume_batch.size(0)
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss
             else:
                 weighted_contrast_loss = 0
+
+
 
             # 学生反向传播（带梯度裁剪）
             student_loss = supervised_loss + consistency_loss + weighted_contrast_loss

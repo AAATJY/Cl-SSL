@@ -408,7 +408,8 @@ class VNet(nn.Module):
             x9 = self.dropout(x9)
         return x9
 
-    def forward(self, input, turnoff_drop=False, enable_dropout=True, return_contrast_feats=True):
+    def forward(self, input, turnoff_drop=False, enable_dropout=True, return_contrast_feats=True,
+                return_encoder_feats=False):
         if turnoff_drop:
             has_dropout = self.has_dropout
             self.has_dropout = False
@@ -432,7 +433,9 @@ class VNet(nn.Module):
         if turnoff_drop:
             self.has_dropout = has_dropout
 
-        if return_contrast_feats:
+        if return_encoder_feats:
+            return seg_out, contrast_feats, enc_features[-1]  # 返回空间特征
+        elif return_contrast_feats:
             return seg_out, contrast_feats
         else:
             return seg_out

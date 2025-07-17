@@ -2,7 +2,7 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 import argparse
 import torch
-from networks.vnet_version1 import VNet
+from networks.vnet_cl import VNet
 from test_util import test_all_case
 
 parser = argparse.ArgumentParser()
@@ -10,7 +10,7 @@ parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/Me
                     help='Dataset root path')
 # parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/MeTi/data/2018LA_Seg_Training Set/2018LA_Seg_Training Set/',
 #                     help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_version1_6', help='Model name')
+parser.add_argument('--model', type=str, default='train_cl', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',
@@ -62,33 +62,33 @@ def test_calculate_metric(epoch_num):
 ##### MPL MOD END
 
 if __name__ == '__main__':
-    metric = test_calculate_metric(15000)
-    print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(15000)
+    # print(f"Results: {metric}\n")
     metric = test_calculate_metric(14000)
     print(f"Results: {metric}\n")
-    metric = test_calculate_metric(13000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(12000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(11000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(10000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(9000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(8000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(7000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(6000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(5000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(4000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(3000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(2000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(1000)
-    print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(13000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(12000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(11000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(10000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(9000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(8000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(7000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(6000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(5000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(4000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(3000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(2000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(1000)
+    # print(f"Results: {metric}\n")

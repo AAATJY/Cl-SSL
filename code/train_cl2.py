@@ -5,7 +5,7 @@
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -122,7 +122,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=2000, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=10, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 args = parser.parse_args()
@@ -367,6 +367,7 @@ if __name__ == "__main__":
             masked_consistency = weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1)
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
             # ================= 新增：对比学习损失 =================
+            # ================= 新增：对比学习损失 =================
             _, _, weak_spatial_feats = student_model(weak_volume_batch, return_encoder_feats=True)
             _, _, strong_spatial_feats = student_model(strong_volume_batch, return_encoder_feats=True)
 
@@ -376,14 +377,14 @@ if __name__ == "__main__":
                     anchor_feat = weak_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
                     positive_feat = strong_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
 
-                    # 有标签样本（label_batch有GT标签）
+                    # 保证label_map和prob_map维度为5维 [B, 1, D, H, W]
                     if i < labeled_bs:
-                        label_map = label_batch[i].unsqueeze(0)  # [1, D, H, W]
+                        label_map = label_batch[i].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         prob_map = None
                     else:
-                        # 无标签样本（伪标签概率和类别）
-                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0)  # [1, D, H, W]
-                        prob_map = max_probs[i - labeled_bs].unsqueeze(0)  # [1, D, H, W]，也可传类别概率
+                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(
+                            1)  # [1, 1, D, H, W]
+                        prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         label_map = pseudo_label
 
                     # 体素对比学习结合RCPS筛选

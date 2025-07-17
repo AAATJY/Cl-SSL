@@ -22,11 +22,6 @@ class RegionAwareContrastiveLearning(nn.Module):
         self.register_buffer('loss_weights', torch.tensor([1.0, 0.7]))  # [patch, voxel]
 
     def forward(self, anchor_feats, positive_feats, labels=None, prob_maps=None):
-        """
-        anchor_feats/positive_feats: [B, C, D, H, W]
-        labels: [B, 1, D, H, W] 或 None
-        prob_maps: [B, 1, D, H, W] 或 None
-        """
         B, C, D, H, W = anchor_feats.shape
         region_probs = self.region_classifier(anchor_feats)
         region_mask = (region_probs > self.edge_threshold).float()
@@ -124,9 +119,6 @@ class RegionAwareContrastiveLearning(nn.Module):
         return loss
 
     def _voxel_level_contrast_batch(self, anchor_patch, positive_patch, label_map=None, prob_map=None):
-        # anchor_patch, positive_patch: [C, D, H, W]
-        # label_map: [1, D, H, W] 或 None
-        # prob_map: [1, D, H, W] 或 None
         anchor_voxels = anchor_patch.view(anchor_patch.size(0), -1).t()  # [N, C]
         positive_voxels = positive_patch.view(positive_patch.size(0), -1).t()  # [N, C]
         N = anchor_voxels.size(0)

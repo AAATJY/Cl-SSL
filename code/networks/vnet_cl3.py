@@ -118,7 +118,7 @@ class RegionAwareContrastiveLearning(nn.Module):
         loss = -F.log_softmax(logits, dim=0)[0]
         return loss
 
-    def rcps_voxel_contrast(anchor_feats, positive_feats, pseudo_labels, prob_map=None, temperature=0.07, topk_neg=32):
+    def rcps_voxel_contrast(self,anchor_feats, positive_feats, pseudo_labels, prob_map=None, temperature=0.07, topk_neg=32):
         """
         anchor_feats: [B, C, D, H, W]
         positive_feats: [B, C, D, H, W]

@@ -122,7 +122,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=2000, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=10, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 args = parser.parse_args()
@@ -385,8 +385,8 @@ if __name__ == "__main__":
 
                     # 新的 RCPS 对比损失
                     contrast_loss += student_model.contrast_learner.rcps_voxel_contrast(
-                        anchor_feat,
-                        positive_feat,
+                        anchor_feats=anchor_feat,
+                        positive_feats=positive_feat,
                         pseudo_labels=label_map,
                         prob_map=prob_map,
                         temperature=args.contrast_temp,

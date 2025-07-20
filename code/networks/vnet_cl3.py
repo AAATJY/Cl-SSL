@@ -132,11 +132,22 @@ class RegionAwareContrastiveLearning(nn.Module):
         anchor_flat = anchor_feats.view(B, C, -1).permute(0, 2, 1)  # [B, N, C]
         positive_flat = positive_feats.view(B, C, -1).permute(0, 2, 1)
         label_flat = pseudo_labels.view(B, -1)  # [B, N]
+        N = anchor_flat.shape[1]  # 关键，获得真实 N
+
         if prob_map is not None:
             conf_flat = prob_map.view(B, -1)
-            mask = (conf_flat > 0.5)  # 只用高置信度体素
+            # 修正：只取前N个
+            if conf_flat.shape[1] > N:
+                conf_flat = conf_flat[:, :N]
+            mask = (conf_flat > 0.5)
         else:
             mask = torch.ones_like(label_flat, dtype=torch.bool)
+
+        # 保证 mask shape 和 anchor_flat 对齐
+        if mask.shape[1] > N:
+            mask = mask[:, :N]
+        elif mask.shape[1] < N:
+            raise ValueError(f"mask.shape[1] ({mask.shape[1]}) < anchor_flat.shape[1] ({N})!")
         # 归一化
         anchor_flat = F.normalize(anchor_flat, dim=-1)
         positive_flat = F.normalize(positive_flat, dim=-1)

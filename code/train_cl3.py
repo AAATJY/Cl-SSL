@@ -367,7 +367,6 @@ if __name__ == "__main__":
             masked_consistency = weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1)
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
             # ================= 新增：对比学习损失 =================
-            # ================= 新增：对比学习损失 =================
             _, _, weak_spatial_feats = student_model(weak_volume_batch, return_encoder_feats=True)
             _, _, strong_spatial_feats = student_model(strong_volume_batch, return_encoder_feats=True)
 
@@ -376,25 +375,23 @@ if __name__ == "__main__":
                 for i in range(volume_batch.size(0)):
                     anchor_feat = weak_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
                     positive_feat = strong_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
-
-                    # 保证label_map和prob_map维度为5维 [B, 1, D, H, W]
                     if i < labeled_bs:
-                        label_map = label_batch[i].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
+                        label_map = label_batch[i].unsqueeze(0).unsqueeze(1)
                         prob_map = None
                     else:
-                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(
-                            1)  # [1, 1, D, H, W]
-                        prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
+                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(1)
+                        prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)
                         label_map = pseudo_label
 
-                    # 体素对比学习结合RCPS筛选
-                    contrast_loss += student_model.contrast_learner(
+                    # 新的 RCPS 对比损失
+                    contrast_loss += student_model.contrast_learner.rcps_voxel_contrast(
                         anchor_feat,
                         positive_feat,
-                        labels=label_map,
-                        prob_maps=prob_map
+                        pseudo_labels=label_map,
+                        prob_map=prob_map,
+                        temperature=args.contrast_temp,
+                        topk_neg=32  # 可配置
                     )
-
                 contrast_loss = contrast_loss / volume_batch.size(0)
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss
@@ -502,6 +499,7 @@ if __name__ == "__main__":
                     student_model.contrast_learner.edge_threshold = new_threshold
                     student_model.contrast_learner.loss_weights[0] = 1.0 - 0.3 * epoch_ratio
                     student_model.contrast_learner.loss_weights[1] = 0.7 + 0.3 * epoch_ratio
+                    student_model.contrast_learner.topk_neg = int(24 + 8 * epoch_ratio)  # top-K动态调整
                     logging.info(
                         f"调整对比学习参数: edge_threshold={new_threshold:.3f}, weights={student_model.contrast_learner.loss_weights}")
 

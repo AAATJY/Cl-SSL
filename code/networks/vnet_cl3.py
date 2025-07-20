@@ -118,34 +118,61 @@ class RegionAwareContrastiveLearning(nn.Module):
         loss = -F.log_softmax(logits, dim=0)[0]
         return loss
 
-    def _voxel_level_contrast_batch(self, anchor_patch, positive_patch, label_map=None, prob_map=None):
-        anchor_voxels = anchor_patch.view(anchor_patch.size(0), -1).t()  # [N, C]
-        positive_voxels = positive_patch.view(positive_patch.size(0), -1).t()  # [N, C]
-        N = anchor_voxels.size(0)
+    def rcps_voxel_contrast(anchor_feats, positive_feats, pseudo_labels, prob_map=None, temperature=0.07, topk_neg=32):
+        """
+        anchor_feats: [B, C, D, H, W]
+        positive_feats: [B, C, D, H, W]
+        pseudo_labels: [B, 1, D, H, W]  # 伪标签，已筛选出高置信度
+        prob_map: [B, 1, D, H, W]      # 置信度分数
+        """
+        B, C, D, H, W = anchor_feats.shape
+        N = D * H * W
 
-        # RCPS-style: 筛选高置信度体素
+        # flatten
+        anchor_flat = anchor_feats.view(B, C, -1).permute(0, 2, 1)  # [B, N, C]
+        positive_flat = positive_feats.view(B, C, -1).permute(0, 2, 1)
+        label_flat = pseudo_labels.view(B, -1)  # [B, N]
         if prob_map is not None:
-            mask = (prob_map.view(-1) > self.edge_threshold)
+            conf_flat = prob_map.view(B, -1)
+            mask = (conf_flat > 0.5)  # 只用高置信度体素
         else:
-            mask = torch.ones(N, dtype=torch.bool, device=anchor_patch.device)
-        idx_selected = torch.arange(N, device=anchor_voxels.device)[mask]
-        if label_map is not None:
-            labels = label_map.view(-1)[mask]
-        else:
-            labels = None
+            mask = torch.ones_like(label_flat, dtype=torch.bool)
+        # 归一化
+        anchor_flat = F.normalize(anchor_flat, dim=-1)
+        positive_flat = F.normalize(positive_flat, dim=-1)
 
-        if idx_selected.numel() == 0:
-            return torch.tensor(0.0, device=anchor_patch.device)
-        anchor_sel = anchor_voxels[idx_selected]
-        positive_sel = positive_voxels[idx_selected]
-        anchor_proj = self.projector(anchor_sel)
-        pos_proj = self.projector(positive_sel)
-        anchor_proj = F.normalize(anchor_proj, dim=1)
-        pos_proj = F.normalize(pos_proj, dim=1)
-        logits = torch.mm(anchor_proj, pos_proj.t()) / self.temp
-        labels_contrast = torch.arange(logits.size(0), device=logits.device)
-        loss = F.cross_entropy(logits, labels_contrast)
-        return loss
+        total_loss = 0
+        for b in range(B):
+            anchor_b = anchor_flat[b][mask[b]]  # [M, C]
+            pos_b = positive_flat[b][mask[b]]  # [M, C]
+            labels_b = label_flat[b][mask[b]]  # [M]
+            M = anchor_b.size(0)
+            if M == 0: continue
+
+            # 构造正样本（同一位置）
+            pos_sim = torch.sum(anchor_b * pos_b, dim=1)  # [M]
+            pos_sim = pos_sim / temperature
+
+            # 构造负样本（同batch内不同类别）
+            # 按类别分组
+            for i in range(M):
+                anchor_vec = anchor_b[i]  # [C]
+                anchor_label = labels_b[i]
+                # 负样本：与anchor不同类别的体素
+                neg_mask = (labels_b != anchor_label)
+                if neg_mask.sum() == 0: continue
+                neg_vecs = pos_b[neg_mask]  # [K, C]
+                neg_sims = torch.matmul(neg_vecs, anchor_vec) / temperature  # [K]
+                # hard negative采样
+                if neg_sims.size(0) > topk_neg:
+                    hard_idx = torch.topk(neg_sims, topk_neg, largest=True)[1]
+                    neg_sims = neg_sims[hard_idx]
+                # 拼接正负
+                logits = torch.cat([pos_sim[i].unsqueeze(0), neg_sims], dim=0)  # [1+K]
+                labels = torch.zeros(logits.size(0), dtype=torch.long, device=anchor_feats.device)
+                loss = F.cross_entropy(logits.unsqueeze(0), labels.unsqueeze(0))  # 只正样本为0
+                total_loss += loss
+        return total_loss / B
 
 class ConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):

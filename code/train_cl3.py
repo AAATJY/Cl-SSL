@@ -1,5 +1,5 @@
 """
-RCPS对比，效果目前不是很好
+RCPS对比
 """
 
 import argparse

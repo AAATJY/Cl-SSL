@@ -122,9 +122,11 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=10, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=3, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
+# 🆕 新增RCPS相关参数
+parser.add_argument('--contrast_hard_neg_k', type=int, default=32, help='对比学习hard negative数量')
 args = parser.parse_args()
 
 train_data_path = args.root_path
@@ -182,6 +184,9 @@ if __name__ == "__main__":
                        has_dropout=False,mc_dropout=True, mc_dropout_rate=args.mc_dropout_rate,)
         else:  # 学生模型基础结构
             net = VNet(n_channels=1, n_classes=num_classes, normalization='batchnorm', has_dropout=True)
+        net.contrast_learner.patch_size = args.contrast_patch_size
+        net.contrast_learner.temp = args.contrast_temp
+        net.contrast_learner.hard_neg_k = args.contrast_hard_neg_k  # 新增
         model = net.cuda()
         # 梯度设置
         if ema:
@@ -189,6 +194,7 @@ if __name__ == "__main__":
                 param.detach_()  # 分离计算图
                 param.requires_grad_(False)  # 显式禁用梯度
         return model
+
 
     # ================= 模型及优化器初始化 =================
     student_model = create_model(teacher=False)  # 可训练学生模型
@@ -375,23 +381,26 @@ if __name__ == "__main__":
                 for i in range(volume_batch.size(0)):
                     anchor_feat = weak_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
                     positive_feat = strong_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
+
+                    # 保证label_map和prob_map维度为5维 [B, 1, D, H, W]
                     if i < labeled_bs:
-                        label_map = label_batch[i].unsqueeze(0).unsqueeze(1)
+                        label_map = label_batch[i].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         prob_map = None
                     else:
-                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(1)
-                        prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)
+                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(
+                            1)  # [1, 1, D, H, W]
+                        prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         label_map = pseudo_label
 
-                    # 新的 RCPS 对比损失
-                    contrast_loss += student_model.contrast_learner.rcps_voxel_contrast(
-                        anchor_feats=anchor_feat,
-                        positive_feats=positive_feat,
-                        pseudo_labels=label_map,
-                        prob_map=prob_map,
-                        temperature=args.contrast_temp,
-                        topk_neg=32  # 可配置
+                    # =================== 这里调用的是RCPS式体素对比学习 ===================
+                    contrast_loss += student_model.contrast_learner(
+                        anchor_feat,
+                        positive_feat,
+                        labels=label_map,
+                        prob_maps=prob_map
                     )
+                    # =================== 结束 ===================
+
                 contrast_loss = contrast_loss / volume_batch.size(0)
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss

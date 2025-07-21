@@ -80,8 +80,7 @@ class RegionAwareContrastiveLearning(nn.Module):
         patch_loss = patch_loss / max(1, valid_count_patch)
         voxel_loss = voxel_loss / max(1, valid_count_voxel)
         total_loss = self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss
-        print(self.patch_counts)
-        return total_loss
+        return total_loss, self.patch_counts.clone()
 
     def _split_into_patches(self, feats):
         B, C, D, H, W = feats.shape

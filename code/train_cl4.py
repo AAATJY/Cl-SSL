@@ -1,5 +1,6 @@
 """
-RCPS对比
+该版本出现的原因是是因为，突然发现在RegionAwareContrastiveLearning直接调用了体素级对比学习，并没有按照最初的想法，
+在核心区域应用补丁级对比学习，在边缘区域应用体素级对比学习，所以需要对两个文件重新进行设计
 """
 
 import argparse

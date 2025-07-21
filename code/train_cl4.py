@@ -394,7 +394,7 @@ if __name__ == "__main__":
                         label_map = pseudo_label
 
                     # =================== 这里调用的是RCPS式体素对比学习 ===================
-                    contrast_loss, region_stats = student_model.contrast_learner(
+                    contrast_loss += student_model.contrast_learner(
                         weak_spatial_feats[i].unsqueeze(0),  # 弱增强特征 [1,C,D,H,W]
                         strong_spatial_feats[i].unsqueeze(0),  # 强增强特征 [1,C,D,H,W]
                         labels=label_map,  # [1,1,D,H,W]
@@ -482,25 +482,14 @@ if __name__ == "__main__":
             writer.add_scalar('train/consistency_loss', consistency_loss, iter_num)
             writer.add_scalar('train/consistency_weight', consistency_weight, iter_num)
             writer.add_scalar('train/consistency_dist', torch.mean(consistency_dist), iter_num)
-
             # 记录对比学习损失
             if contrast_enabled:
                 writer.add_scalar('loss/contrast_loss', contrast_loss, iter_num)
                 writer.add_scalar('loss/weighted_contrast_loss', weighted_contrast_loss, iter_num)
-                writer.add_scalars('contrast/region_usage', {
-                    'core': region_stats[0].item(), 'edge': region_stats[1].item(), 'skipped': region_stats[2].item()},
-                                   iter_num)
-                # 计算比例（更直观）
-                total_patches = region_stats.sum().item()
-                core_ratio = region_stats[0].item() / total_patches * 100
-                edge_ratio = region_stats[1].item() / total_patches * 100
-                skip_ratio = region_stats[2].item() / total_patches * 100
-
-                # 打印到控制台日志
-                logging.info(f'Region Usage: Core={core_ratio:.1f}%({int(region_stats[0])}) | '
-                             f'Edge={edge_ratio:.1f}%({int(region_stats[1])}) | '
-                             f'Skipped={skip_ratio:.1f}%({int(region_stats[2])})')
-            logging.info('iteration %d : loss : %f  loss_weight: %f  region_usage: %f' %(iter_num, student_loss.item(),  consistency_weight,()))
+            # logging.info('iteration %d : loss : %f cons_dist: %f, loss_weight: %f' %
+            #              (iter_num, student_loss.item(), consistency_dist.item(), consistency_weight))
+            logging.info('iteration %d : loss : %f  loss_weight: %f' %
+                         (iter_num, student_loss.item(),  consistency_weight))
 
             ## change lr
             def adjust_learning_rate(optimizer, iteration, max_iter, base_lr):

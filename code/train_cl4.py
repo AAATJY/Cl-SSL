@@ -1,8 +1,7 @@
 """
 该版本出现的原因是是因为，突然发现在RegionAwareContrastiveLearning直接调用了体素级对比学习，并没有按照最初的想法，
-在核心区域应用补丁级对比学习，在边缘区域应用体素级对比学习，所以需要对两个文件重新进行设计
+在核心区域应用补丁级对比学习，在边缘区域应用体素级对比学习，所以需要对两个文件重新进行设计.该设计基于train_cl修改
 """
-
 import argparse
 import logging
 import os
@@ -27,7 +26,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_cl4 import VNet
+from networks.vnet_cl import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -102,10 +101,10 @@ class MPLController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cl4', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cl', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
-parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
-parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
+parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
+parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
 parser.add_argument('--base_lr', type=float, default=0.01, help='maximum epoch number to train')
 parser.add_argument('--deterministic', type=int, default=1, help='whether use deterministic training')
 parser.add_argument('--seed', type=int, default=1337, help='random seed')
@@ -123,11 +122,9 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=2500, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=2000, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
-# 🆕 新增RCPS相关参数
-parser.add_argument('--contrast_hard_neg_k', type=int, default=32, help='对比学习hard negative数量')
 args = parser.parse_args()
 
 train_data_path = args.root_path
@@ -185,9 +182,6 @@ if __name__ == "__main__":
                        has_dropout=False,mc_dropout=True, mc_dropout_rate=args.mc_dropout_rate,)
         else:  # 学生模型基础结构
             net = VNet(n_channels=1, n_classes=num_classes, normalization='batchnorm', has_dropout=True)
-        net.contrast_learner.patch_size = args.contrast_patch_size
-        net.contrast_learner.temp = args.contrast_temp
-        net.contrast_learner.hard_neg_k = args.contrast_hard_neg_k  # 新增
         model = net.cuda()
         # 梯度设置
         if ema:
@@ -195,7 +189,6 @@ if __name__ == "__main__":
                 param.detach_()  # 分离计算图
                 param.requires_grad_(False)  # 显式禁用梯度
         return model
-
 
     # ================= 模型及优化器初始化 =================
     student_model = create_model(teacher=False)  # 可训练学生模型
@@ -373,40 +366,40 @@ if __name__ == "__main__":
             weighted_loss = consistency_dist * mask  # 逐样本加权
             masked_consistency = weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1)
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
-            # ================= 新增：对比学习损失 =================
+            # ========== 新增：对比学习损失 ==========
+            # 获取空间特征而不是池化后的向量
             _, _, weak_spatial_feats = student_model(weak_volume_batch, return_encoder_feats=True)
             _, _, strong_spatial_feats = student_model(strong_volume_batch, return_encoder_feats=True)
 
+            # 对每个样本计算对比损失
             contrast_loss = 0
             if contrast_enabled:
                 for i in range(volume_batch.size(0)):
-                    anchor_feat = weak_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
-                    positive_feat = strong_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
+                    # 获取空间特征 [1, C, D, H, W]，这样才能切分补丁
+                    anchor_feat = weak_spatial_feats[i].unsqueeze(0)
+                    positive_feat = strong_spatial_feats[i].unsqueeze(0)
 
-                    # 保证label_map和prob_map维度为5维 [B, 1, D, H, W]
-                    if i < labeled_bs:
-                        label_map = label_batch[i].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
-                        prob_map = None
-                    else:
-                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(
-                            1)  # [1, 1, D, H, W]
-                        prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
+                    # 获取标签信息（可选，如果你的RegionAwareContrastiveLearning forward用不到labels可以不传）
+                    if i < labeled_bs:  # 有标签样本
+                        label_map = label_batch[i].unsqueeze(0)
+                    else:  # 无标签样本
+                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0)
                         label_map = pseudo_label
 
-                    # =================== 这里调用的是RCPS式体素对比学习 ===================
+                    # 调用对比学习
                     contrast_loss += student_model.contrast_learner(
                         anchor_feat,
                         positive_feat,
-                        labels=label_map,
-                        prob_maps=prob_map
+                        label_map
                     )
-                    # =================== 结束 ===================
 
                 contrast_loss = contrast_loss / volume_batch.size(0)
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss
             else:
                 weighted_contrast_loss = 0
+
+
 
             # 学生反向传播（带梯度裁剪）
             student_loss = supervised_loss + consistency_loss + weighted_contrast_loss
@@ -509,7 +502,6 @@ if __name__ == "__main__":
                     student_model.contrast_learner.edge_threshold = new_threshold
                     student_model.contrast_learner.loss_weights[0] = 1.0 - 0.3 * epoch_ratio
                     student_model.contrast_learner.loss_weights[1] = 0.7 + 0.3 * epoch_ratio
-                    student_model.contrast_learner.topk_neg = int(24 + 8 * epoch_ratio)  # top-K动态调整
                     logging.info(
                         f"调整对比学习参数: edge_threshold={new_threshold:.3f}, weights={student_model.contrast_learner.loss_weights}")
 

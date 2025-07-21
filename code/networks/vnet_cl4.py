@@ -2,14 +2,12 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-
 class RegionAwareContrastiveLearning(nn.Module):
-    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.25, hard_neg_k=32):
+    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.25):
         super().__init__()
         self.temp = temp
         self.patch_size = patch_size
         self.edge_threshold = edge_threshold
-        self.hard_neg_k = hard_neg_k
         self.region_classifier = nn.Sequential(
             nn.Conv3d(feat_dim, 32, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -23,27 +21,20 @@ class RegionAwareContrastiveLearning(nn.Module):
         )
         self.register_buffer('loss_weights', torch.tensor([1.0, 0.7]))  # [patch, voxel]
 
-    def forward(self, anchor_feats, positive_feats, labels=None, prob_maps=None):
+    def forward(self, anchor_feats, positive_feats, labels=None):
         B, C, D, H, W = anchor_feats.shape
         region_probs = self.region_classifier(anchor_feats)
         region_mask = (region_probs > self.edge_threshold).float()
         anchor_patches = self._split_into_patches(anchor_feats)
         positive_patches = self._split_into_patches(positive_feats)
         region_patches = self._split_into_patches(region_mask)
-        if labels is not None:
-            label_patches = self._split_into_patches(labels)
-        else:
-            label_patches = None
-        if prob_maps is not None:
-            prob_patches = self._split_into_patches(prob_maps)
-        else:
-            prob_patches = None
 
         patch_loss = 0
         voxel_loss = 0
         valid_count_patch = 0
         valid_count_voxel = 0
 
+        # 批量处理所有patch
         for b in range(B):
             edge_ratios = region_patches[b].mean(dim=(2, 3, 4))
             for p_idx in range(anchor_patches.size(1)):
@@ -51,23 +42,11 @@ class RegionAwareContrastiveLearning(nn.Module):
                 positive_patch = positive_patches[b, p_idx]
                 edge_ratio = edge_ratios[p_idx].item()
                 if edge_ratio > 0.6:
-                    if label_patches is not None:
-                        label_map = label_patches[b, p_idx]
-                    else:
-                        label_map = None
-                    if prob_patches is not None:
-                        prob_map = prob_patches[b, p_idx]
-                    else:
-                        prob_map = region_patches[b, p_idx]
-                    voxel_loss += self._rcps_voxel_level_contrast(
-                        anchor_patch, positive_patch,
-                        label_map=label_map, prob_map=prob_map
-                    )
+                    # 体素级InfoNCE
+                    voxel_loss += self._voxel_level_contrast_batch(anchor_patch, positive_patch)
                     valid_count_voxel += 1
                 elif edge_ratio < 0.4:
-                    patch_loss += self._patch_level_contrast_batch(
-                        anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx
-                    )
+                    patch_loss += self._patch_level_contrast_batch(anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx)
                     valid_count_patch += 1
                 else:
                     continue
@@ -81,10 +60,12 @@ class RegionAwareContrastiveLearning(nn.Module):
         B, C, D, H, W = feats.shape
         P_d, P_h, P_w = self.patch_size, self.patch_size, self.patch_size
 
+        # 修正：自动补零padding到能够整除patch_size
         pad_d = (P_d - D % P_d) % P_d
         pad_h = (P_h - H % P_h) % P_h
         pad_w = (P_w - W % P_w) % P_w
         if pad_d or pad_h or pad_w:
+            # F.pad的顺序是最后一个维度开始：[W, H, D]
             feats = F.pad(feats, (0, pad_w, 0, pad_h, 0, pad_d))
             D, H, W = feats.shape[-3:]
 
@@ -93,9 +74,12 @@ class RegionAwareContrastiveLearning(nn.Module):
         return patches
 
     def _patch_level_contrast_batch(self, anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx):
+        # 所有patch全局平均池化，批量对比
         B, N, C, P_d, P_h, P_w = anchor_patches.shape
         anchor_vec = F.adaptive_avg_pool3d(anchor_patch.unsqueeze(0), 1).squeeze().flatten(0)
         positive_vec = F.adaptive_avg_pool3d(positive_patch.unsqueeze(0), 1).squeeze().flatten(0)
+
+        # 负样本：同batch其它patch
         negatives = []
         for bb in range(B):
             for pp in range(anchor_patches.size(1)):
@@ -107,70 +91,43 @@ class RegionAwareContrastiveLearning(nn.Module):
         if not negatives:
             return torch.tensor(0.0, device=anchor_patch.device)
         negatives = torch.stack(negatives, dim=0)
+
         anchor_proj = self.projector(anchor_vec)
         pos_proj = self.projector(positive_vec)
-        neg_proj = self.projector(negatives)
+        neg_proj = self.projector(negatives)  # [N_neg, 64]
+
         anchor_proj = F.normalize(anchor_proj, dim=0)
         pos_proj = F.normalize(pos_proj, dim=0)
         neg_proj = F.normalize(neg_proj, dim=1)
+
+        # logits: [1 + N_neg]
         logits = torch.cat([torch.dot(anchor_proj, pos_proj).unsqueeze(0), torch.mv(neg_proj, anchor_proj)], dim=0)
         logits = logits / self.temp
+        # 目标索引必须为0（第一个是正样本）
         loss = -F.log_softmax(logits, dim=0)[0]
         return loss
 
-    def _rcps_voxel_level_contrast(self, anchor_patch, positive_patch, label_map=None, prob_map=None):
-        # [C, D, H, W] => [N, C]
-        C, D, H, W = anchor_patch.shape
-        N = D * H * W
-        anchor_vox = anchor_patch.view(C, -1).t()  # [N, C]
-        positive_vox = positive_patch.view(C, -1).t()  # [N, C]
-
-        # 筛选高置信度体素
-        if prob_map is not None:
-            mask = (prob_map.view(-1) > self.edge_threshold)
-        else:
-            mask = torch.ones(N, dtype=torch.bool, device=anchor_patch.device)
-        anchor_sel = anchor_vox[mask]
-        positive_sel = positive_vox[mask]
-        N_sel = anchor_sel.size(0)
-        if N_sel == 0:
-            return torch.tensor(0.0, device=anchor_patch.device)
-
-        if label_map is not None:
-            labels = label_map.view(-1)[mask]  # [N_sel]
-            # 正负掩码
-            pos_mask = labels.unsqueeze(0) == labels.unsqueeze(1)  # [N_sel, N_sel]
-            neg_mask = labels.unsqueeze(0) != labels.unsqueeze(1)
-        else:
-            pos_mask = torch.eye(N_sel, dtype=torch.bool, device=anchor_sel.device)
-            neg_mask = ~pos_mask
-
-        anchor_proj = F.normalize(self.projector(anchor_sel), dim=1)
-        positive_proj = F.normalize(self.projector(positive_sel), dim=1)
-        sim_matrix = torch.mm(anchor_proj, positive_proj.t()) / self.temp  # [N_sel, N_sel]
-
-        # Hard negative mining
-        hard_negatives = []
-        for i in range(N_sel):
-            neg_sim = sim_matrix[i][neg_mask[i]]
-            if neg_sim.numel() > self.hard_neg_k:
-                topk_neg_sim, _ = torch.topk(neg_sim, self.hard_neg_k)
-                hard_negatives.append(topk_neg_sim)
-            else:
-                hard_negatives.append(neg_sim)
-        hard_negatives = torch.stack([F.pad(hn, (0, self.hard_neg_k - hn.numel()), value=0) for hn in hard_negatives],
-                                     dim=0)  # [N_sel, hard_neg_k]
-
-        pos_sim = sim_matrix[pos_mask].view(N_sel, -1)  # [N_sel, ?]
-        neg_sim = hard_negatives  # [N_sel, hard_neg_k]
-
-        # RCPS-style NT-Xent loss
-        # 对每个选定体素，正样本sim均值，负样本sim均值
-        exp_pos = torch.exp(pos_sim.mean(dim=1))
-        exp_neg = torch.exp(neg_sim).sum(dim=1) + exp_pos
-        loss = -torch.log(exp_pos / (exp_neg + 1e-8))
-        return loss.mean()
-
+    def _voxel_level_contrast_batch(self, anchor_patch, positive_patch):
+        # 扁平所有体素，[C, N]
+        anchor_voxels = anchor_patch.view(anchor_patch.size(0), -1).t()
+        positive_voxels = positive_patch.view(positive_patch.size(0), -1).t()
+        # 只对齐前min(100, N)个体素
+        num_voxels = anchor_voxels.size(0)
+        sample_size = min(100, num_voxels)
+        if num_voxels > sample_size:
+            idxs = torch.randperm(num_voxels)[:sample_size]
+            anchor_voxels = anchor_voxels[idxs]
+            positive_voxels = positive_voxels[idxs]
+        # 投影
+        anchor_proj = self.projector(anchor_voxels)
+        pos_proj = self.projector(positive_voxels)
+        anchor_proj = F.normalize(anchor_proj, dim=1)
+        pos_proj = F.normalize(pos_proj, dim=1)
+        # negatives: 所有体素互为负样本
+        logits = torch.mm(anchor_proj, pos_proj.t()) / self.temp
+        labels = torch.arange(logits.size(0), device=logits.device)
+        loss = F.cross_entropy(logits, labels)
+        return loss
 
 class ConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):
@@ -178,7 +135,7 @@ class ConvBlock(nn.Module):
 
         ops = []
         for i in range(n_stages):
-            if i == 0:
+            if i==0:
                 input_channel = n_filters_in
             else:
                 input_channel = n_filters_out
@@ -222,7 +179,7 @@ class ResidualConvBlock(nn.Module):
             elif normalization != 'none':
                 assert False
 
-            if i != n_stages - 1:
+            if i != n_stages-1:
                 ops.append(nn.ReLU(inplace=True))
 
         self.conv = nn.Sequential(*ops)
@@ -293,7 +250,7 @@ class Upsampling(nn.Module):
         super(Upsampling, self).__init__()
 
         ops = []
-        ops.append(nn.Upsample(scale_factor=stride, mode='trilinear', align_corners=False))
+        ops.append(nn.Upsample(scale_factor=stride, mode='trilinear',align_corners=False))
         ops.append(nn.Conv3d(n_filters_in, n_filters_out, kernel_size=3, padding=1))
         if normalization == 'batchnorm':
             ops.append(nn.BatchNorm3d(n_filters_out))
@@ -313,8 +270,7 @@ class Upsampling(nn.Module):
 
 
 class VNet(nn.Module):
-    def __init__(self, n_channels=3, n_classes=2, n_filters=16, normalization='none', has_dropout=False,
-                 mc_dropout=False, mc_dropout_rate=0.2):
+    def __init__(self, n_channels=3, n_classes=2, n_filters=16, normalization='none', has_dropout=False,mc_dropout=False, mc_dropout_rate=0.2):
         super(VNet, self).__init__()
         self.has_dropout = has_dropout
         self.mc_dropout = mc_dropout
@@ -365,7 +321,7 @@ class VNet(nn.Module):
             feat_dim=n_filters * 16,  # 即256
             patch_size=16,
             temp=0.1
-        )
+)
 
         # 用于对比学习的额外投影头
         self.contrast_projector = nn.Sequential(
@@ -373,6 +329,7 @@ class VNet(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 64)
         )
+
 
     def encoder(self, input):
         x1 = self.block_one(input)
@@ -433,8 +390,7 @@ class VNet(nn.Module):
             x9 = self.dropout(x9)
         return x9
 
-    def forward(self, input, turnoff_drop=False, enable_dropout=True, return_contrast_feats=True,
-                return_encoder_feats=False):
+    def forward(self, input, turnoff_drop=False, enable_dropout=True, return_contrast_feats=True, return_encoder_feats=False):
         if turnoff_drop:
             has_dropout = self.has_dropout
             self.has_dropout = False

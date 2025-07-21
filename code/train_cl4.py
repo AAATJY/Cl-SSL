@@ -6,7 +6,7 @@
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -123,7 +123,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=2500, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=3, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 # 🆕 新增RCPS相关参数
@@ -395,10 +395,10 @@ if __name__ == "__main__":
 
                     # =================== 这里调用的是RCPS式体素对比学习 ===================
                     contrast_loss += student_model.contrast_learner(
-                        anchor_feat,
-                        positive_feat,
-                        labels=label_map,
-                        prob_maps=prob_map
+                        weak_spatial_feats[i].unsqueeze(0),  # 弱增强特征 [1,C,D,H,W]
+                        strong_spatial_feats[i].unsqueeze(0),  # 强增强特征 [1,C,D,H,W]
+                        labels=label_map,  # [1,1,D,H,W]
+                        prob_maps=prob_map  # [1,1,D,H,W] (可选)
                     )
                     # =================== 结束 ===================
 

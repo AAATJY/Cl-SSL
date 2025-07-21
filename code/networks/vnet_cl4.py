@@ -10,6 +10,7 @@ class RegionAwareContrastiveLearning(nn.Module):
         self.patch_size = patch_size
         self.edge_threshold = edge_threshold
         self.hard_neg_k = hard_neg_k
+        self.register_buffer('patch_counts', torch.zeros(3))  # [core, edge, skip]
         self.region_classifier = nn.Sequential(
             nn.Conv3d(feat_dim, 32, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -24,6 +25,7 @@ class RegionAwareContrastiveLearning(nn.Module):
         self.register_buffer('loss_weights', torch.tensor([1.0, 0.7]))  # [patch, voxel]
 
     def forward(self, anchor_feats, positive_feats, labels=None, prob_maps=None):
+        self.patch_counts.zero_()
         B, C, D, H, W = anchor_feats.shape
         region_probs = self.region_classifier(anchor_feats)
         region_mask = (region_probs > self.edge_threshold).float()
@@ -51,6 +53,7 @@ class RegionAwareContrastiveLearning(nn.Module):
                 positive_patch = positive_patches[b, p_idx]
                 edge_ratio = edge_ratios[p_idx].item()
                 if edge_ratio > 0.6:
+                    self.patch_counts[1] += 1  # 记录边缘区域
                     if label_patches is not None:
                         label_map = label_patches[b, p_idx]
                     else:
@@ -65,16 +68,19 @@ class RegionAwareContrastiveLearning(nn.Module):
                     )
                     valid_count_voxel += 1
                 elif edge_ratio < 0.4:
+                    self.patch_counts[0] += 1  # 记录核心区域
                     patch_loss += self._patch_level_contrast_batch(
                         anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx
                     )
                     valid_count_patch += 1
                 else:
+                    self.patch_counts[2] += 1  # 记录跳过区域
                     continue
 
         patch_loss = patch_loss / max(1, valid_count_patch)
         voxel_loss = voxel_loss / max(1, valid_count_voxel)
         total_loss = self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss
+        print(self.patch_counts)
         return total_loss
 
     def _split_into_patches(self, feats):

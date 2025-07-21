@@ -26,7 +26,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_cl3 import VNet
+from networks.vnet_cl4 import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -101,7 +101,7 @@ class MPLController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cl3', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cl4', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')

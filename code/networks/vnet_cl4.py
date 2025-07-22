@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-
 class RegionAwareContrastiveLearning(nn.Module):
     def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.25, hard_neg_k=32):
         super().__init__()
@@ -48,14 +47,12 @@ class RegionAwareContrastiveLearning(nn.Module):
 
         for b in range(B):
             edge_ratios = region_patches[b].mean(dim=(2, 3, 4))
-            print(anchor_patches)
             for p_idx in range(anchor_patches.size(1)):
                 anchor_patch = anchor_patches[b, p_idx]
                 positive_patch = positive_patches[b, p_idx]
                 edge_ratio = edge_ratios[p_idx].item()
                 if edge_ratio > 0.6:
                     self.patch_counts[1] += 1  # 记录边缘区域
-                    print("边缘")
                     if label_patches is not None:
                         label_map = label_patches[b, p_idx]
                     else:
@@ -71,20 +68,17 @@ class RegionAwareContrastiveLearning(nn.Module):
                     valid_count_voxel += 1
                 elif edge_ratio < 0.4:
                     self.patch_counts[0] += 1  # 记录核心区域
-                    print("核心")
                     patch_loss += self._patch_level_contrast_batch(
                         anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx
                     )
                     valid_count_patch += 1
                 else:
                     self.patch_counts[2] += 1  # 记录跳过区域
-                    print("不确定")
                     continue
 
         patch_loss = patch_loss / max(1, valid_count_patch)
         voxel_loss = voxel_loss / max(1, valid_count_voxel)
         total_loss = self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss
-        print(self.patch_counts.clone())
         return total_loss
 
     def _split_into_patches(self, feats):
@@ -129,13 +123,11 @@ class RegionAwareContrastiveLearning(nn.Module):
         return loss
 
     def _rcps_voxel_level_contrast(self, anchor_patch, positive_patch, label_map=None, prob_map=None):
-        # [C, D, H, W] => [N, C]
         C, D, H, W = anchor_patch.shape
         N = D * H * W
-        anchor_vox = anchor_patch.view(C, -1).t()  # [N, C]
-        positive_vox = positive_patch.view(C, -1).t()  # [N, C]
+        anchor_vox = anchor_patch.view(C, -1).t()
+        positive_vox = positive_patch.view(C, -1).t()
 
-        # 筛选高置信度体素
         if prob_map is not None:
             mask = (prob_map.view(-1) > self.edge_threshold)
         else:
@@ -147,9 +139,8 @@ class RegionAwareContrastiveLearning(nn.Module):
             return torch.tensor(0.0, device=anchor_patch.device)
 
         if label_map is not None:
-            labels = label_map.view(-1)[mask]  # [N_sel]
-            # 正负掩码
-            pos_mask = labels.unsqueeze(0) == labels.unsqueeze(1)  # [N_sel, N_sel]
+            labels = label_map.view(-1)[mask]
+            pos_mask = labels.unsqueeze(0) == labels.unsqueeze(1)
             neg_mask = labels.unsqueeze(0) != labels.unsqueeze(1)
         else:
             pos_mask = torch.eye(N_sel, dtype=torch.bool, device=anchor_sel.device)
@@ -157,9 +148,14 @@ class RegionAwareContrastiveLearning(nn.Module):
 
         anchor_proj = F.normalize(self.projector(anchor_sel), dim=1)
         positive_proj = F.normalize(self.projector(positive_sel), dim=1)
-        sim_matrix = torch.mm(anchor_proj, positive_proj.t()) / self.temp  # [N_sel, N_sel]
+        sim_matrix = torch.mm(anchor_proj, positive_proj.t()) / self.temp
 
-        # Hard negative mining
+        # 正样本均值
+        pos_sim = sim_matrix * pos_mask  # [N_sel, N_sel]
+        pos_count = pos_mask.sum(dim=1)  # [N_sel]
+        pos_sim_mean = pos_sim.sum(dim=1) / (pos_count + 1e-8)  # [N_sel]
+
+        # hard negative mining保持不变
         hard_negatives = []
         for i in range(N_sel):
             neg_sim = sim_matrix[i][neg_mask[i]]
@@ -169,30 +165,22 @@ class RegionAwareContrastiveLearning(nn.Module):
             else:
                 hard_negatives.append(neg_sim)
         hard_negatives = torch.stack([F.pad(hn, (0, self.hard_neg_k - hn.numel()), value=0) for hn in hard_negatives],
-                                     dim=0)  # [N_sel, hard_neg_k]
+                                    dim=0)  # [N_sel, hard_neg_k]
+        neg_sim = hard_negatives
 
-        pos_sim = sim_matrix[pos_mask].view(N_sel, -1)  # [N_sel, ?]
-        neg_sim = hard_negatives  # [N_sel, hard_neg_k]
-
-        # RCPS-style NT-Xent loss
-        # 对每个选定体素，正样本sim均值，负样本sim均值
-        exp_pos = torch.exp(pos_sim.mean(dim=1))
+        exp_pos = torch.exp(pos_sim_mean)
         exp_neg = torch.exp(neg_sim).sum(dim=1) + exp_pos
         loss = -torch.log(exp_pos / (exp_neg + 1e-8))
         return loss.mean()
 
+# 其余Block结构保持不变...
 
 class ConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):
         super(ConvBlock, self).__init__()
-
         ops = []
         for i in range(n_stages):
-            if i == 0:
-                input_channel = n_filters_in
-            else:
-                input_channel = n_filters_out
-
+            input_channel = n_filters_in if i == 0 else n_filters_out
             ops.append(nn.Conv3d(input_channel, n_filters_out, 3, padding=1))
             if normalization == 'batchnorm':
                 ops.append(nn.BatchNorm3d(n_filters_out))
@@ -203,25 +191,17 @@ class ConvBlock(nn.Module):
             elif normalization != 'none':
                 assert False
             ops.append(nn.ReLU(inplace=True))
-
         self.conv = nn.Sequential(*ops)
-
     def forward(self, x):
         x = self.conv(x)
         return x
 
-
 class ResidualConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):
         super(ResidualConvBlock, self).__init__()
-
         ops = []
         for i in range(n_stages):
-            if i == 0:
-                input_channel = n_filters_in
-            else:
-                input_channel = n_filters_out
-
+            input_channel = n_filters_in if i == 0 else n_filters_out
             ops.append(nn.Conv3d(input_channel, n_filters_out, 3, padding=1))
             if normalization == 'batchnorm':
                 ops.append(nn.BatchNorm3d(n_filters_out))
@@ -231,23 +211,18 @@ class ResidualConvBlock(nn.Module):
                 ops.append(nn.InstanceNorm3d(n_filters_out))
             elif normalization != 'none':
                 assert False
-
             if i != n_stages - 1:
                 ops.append(nn.ReLU(inplace=True))
-
         self.conv = nn.Sequential(*ops)
         self.relu = nn.ReLU(inplace=True)
-
     def forward(self, x):
         x = (self.conv(x) + x)
         x = self.relu(x)
         return x
 
-
 class DownsamplingConvBlock(nn.Module):
     def __init__(self, n_filters_in, n_filters_out, stride=2, normalization='none'):
         super(DownsamplingConvBlock, self).__init__()
-
         ops = []
         if normalization != 'none':
             ops.append(nn.Conv3d(n_filters_in, n_filters_out, stride, padding=0, stride=stride))
@@ -261,20 +236,15 @@ class DownsamplingConvBlock(nn.Module):
                 assert False
         else:
             ops.append(nn.Conv3d(n_filters_in, n_filters_out, stride, padding=0, stride=stride))
-
         ops.append(nn.ReLU(inplace=True))
-
         self.conv = nn.Sequential(*ops)
-
     def forward(self, x):
         x = self.conv(x)
         return x
-
 
 class UpsamplingDeconvBlock(nn.Module):
     def __init__(self, n_filters_in, n_filters_out, stride=2, normalization='none'):
         super(UpsamplingDeconvBlock, self).__init__()
-
         ops = []
         if normalization != 'none':
             ops.append(nn.ConvTranspose3d(n_filters_in, n_filters_out, stride, padding=0, stride=stride))
@@ -288,20 +258,15 @@ class UpsamplingDeconvBlock(nn.Module):
                 assert False
         else:
             ops.append(nn.ConvTranspose3d(n_filters_in, n_filters_out, stride, padding=0, stride=stride))
-
         ops.append(nn.ReLU(inplace=True))
-
         self.conv = nn.Sequential(*ops)
-
     def forward(self, x):
         x = self.conv(x)
         return x
 
-
 class Upsampling(nn.Module):
     def __init__(self, n_filters_in, n_filters_out, stride=2, normalization='none'):
         super(Upsampling, self).__init__()
-
         ops = []
         ops.append(nn.Upsample(scale_factor=stride, mode='trilinear', align_corners=False))
         ops.append(nn.Conv3d(n_filters_in, n_filters_out, kernel_size=3, padding=1))
@@ -314,13 +279,10 @@ class Upsampling(nn.Module):
         elif normalization != 'none':
             assert False
         ops.append(nn.ReLU(inplace=True))
-
         self.conv = nn.Sequential(*ops)
-
     def forward(self, x):
         x = self.conv(x)
         return x
-
 
 class VNet(nn.Module):
     def __init__(self, n_channels=3, n_classes=2, n_filters=16, normalization='none', has_dropout=False,
@@ -360,24 +322,20 @@ class VNet(nn.Module):
             self.dropout = nn.Dropout3d(p=0.5, inplace=False)
         if mc_dropout:  # 教师模型专用dropout
             self.mc_dropout_layers = nn.ModuleList([
-                nn.Dropout3d(p=mc_dropout_rate) for _ in range(4)  # 在4个关键位置添加
+                nn.Dropout3d(p=mc_dropout_rate) for _ in range(4)
             ])
         # ========== 新增对比学习组件 ==========
-        # 特征提取器（使用编码器最后一层特征）
+        self.decoder_proj = nn.Conv3d(n_filters, 128, 1)  # 新增：将解码器输出投影到256维
         self.contrast_feat_extractor = nn.Sequential(
             nn.AdaptiveAvgPool3d(1),
             nn.Flatten(),
-            nn.Linear(n_filters * 16, 128)  # 假设最终特征维度128
+            nn.Linear(n_filters*16, 128)
         )
-
-        # 区域感知对比学习模块
         self.contrast_learner = RegionAwareContrastiveLearning(
-            feat_dim=n_filters * 16,  # 即256
+            feat_dim=128,
             patch_size=16,
             temp=0.1
         )
-
-        # 用于对比学习的额外投影头
         self.contrast_projector = nn.Sequential(
             nn.Linear(128, 128),
             nn.ReLU(),
@@ -387,37 +345,27 @@ class VNet(nn.Module):
     def encoder(self, input):
         x1 = self.block_one(input)
         x1_dw = self.block_one_dw(x1)
-
         if self.mc_dropout:
             x1 = self.mc_dropout_layers[0](x1)
-
         x2 = self.block_two(x1_dw)
         x2_dw = self.block_two_dw(x2)
-
         if self.mc_dropout:
             x2 = self.mc_dropout_layers[1](x2)
-
         x3 = self.block_three(x2_dw)
         x3_dw = self.block_three_dw(x3)
-
         if self.mc_dropout:
             x3 = self.mc_dropout_layers[2](x3)
-
         x4 = self.block_four(x3_dw)
         x4_dw = self.block_four_dw(x4)
-
         if self.mc_dropout:
             x4 = self.mc_dropout_layers[3](x4)
-
         x5 = self.block_five(x4_dw)
         if self.has_dropout:
             x5 = self.dropout(x5)
-
         res = [x1, x2, x3, x4, x5]
-
         return res
 
-    def decoder(self, features):
+    def decoder(self, features, return_spatial_feats=False):
         x1 = features[0]
         x2 = features[1]
         x3 = features[2]
@@ -438,38 +386,37 @@ class VNet(nn.Module):
         x8 = self.block_eight(x7_up)
         x8_up = self.block_eight_up(x8)
         x8_up = x8_up + x1
+
         x9 = self.block_nine(x8_up)
         if self.has_dropout:
             x9 = self.dropout(x9)
+        if return_spatial_feats:
+            return x9  # [B, n_filters, D, H, W]
         return x9
 
     def forward(self, input, turnoff_drop=False, enable_dropout=True, return_contrast_feats=True,
-                return_encoder_feats=False):
+                return_encoder_feats=False, return_decoder_feats=False):
         if turnoff_drop:
             has_dropout = self.has_dropout
             self.has_dropout = False
-
-        # MC Dropout特殊处理
         if self.mc_dropout and enable_dropout:
-            self.train()  # 强制保持训练模式
-
-        # 编码器特征
+            self.train()
         enc_features = self.encoder(input)
-
-        # 对比学习特征 (使用编码器最后一层特征)
         contrast_feats = self.contrast_feat_extractor(enc_features[-1])
-
-        # 解码器特征
-        dec_features = self.decoder(enc_features)
-
-        # 分割输出
+        if return_decoder_feats:
+            dec_features = self.decoder(enc_features, return_spatial_feats=True)
+            dec_features_proj = self.decoder_proj(dec_features)
+        else:
+            dec_features = self.decoder(enc_features, return_spatial_feats=False)
+            dec_features_proj = None
         seg_out = self.out_conv(dec_features)
-
         if turnoff_drop:
             self.has_dropout = has_dropout
-
-        if return_encoder_feats:
-            return seg_out, contrast_feats, enc_features[-1]  # 返回空间特征
+        if return_decoder_feats:
+            # 返回：分割输出，全局对比特征，解码器空间特征（投影后，通道256）
+            return seg_out, contrast_feats, dec_features_proj
+        elif return_encoder_feats:
+            return seg_out, contrast_feats, enc_features[-1]
         elif return_contrast_feats:
             return seg_out, contrast_feats
         else:

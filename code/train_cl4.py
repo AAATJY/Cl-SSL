@@ -27,7 +27,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_cl4 import VNet
+from networks.vnet_cl3 import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -102,7 +102,7 @@ class MPLController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cl4', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cl3', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
@@ -347,12 +347,12 @@ if __name__ == "__main__":
             student_seg_out, student_contrast_feats = student_model(volume_batch, return_contrast_feats=True)
 
             # 弱增强视图的特征 (用于对比学习的锚点)
-            _, weak_contrast_feats = student_model(weak_volume_batch, return_contrast_feats=True)
+            _, _, weak_decoder_feats = student_model(weak_volume_batch, return_decoder_feats=True)
 
             # 强增强视图的特征 (用于对比学习的正样本)
             with torch.no_grad():
-                _, strong_contrast_feats = student_model(strong_volume_batch, return_contrast_feats=True)
-                strong_contrast_feats = strong_contrast_feats.detach()
+                _, _, strong_decoder_feats = student_model(strong_volume_batch, return_decoder_feats=True)
+                strong_decoder_feats = strong_decoder_feats.detach()
 
             # 监督损失（带标签平滑）
             focal_criterion = FocalLoss(alpha=0.8, gamma=2)# 新增损失函数
@@ -369,7 +369,6 @@ if __name__ == "__main__":
                 student_seg_out[labeled_bs:],
                 label_smoothing(probs, factor=0.1)  # 教师标签平滑
             )
-            # print(f"mask维度: {mask.shape}")
             weighted_loss = consistency_dist * mask  # 逐样本加权
             masked_consistency = weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1)
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
@@ -380,33 +379,30 @@ if __name__ == "__main__":
             contrast_loss = 0
             if contrast_enabled:
                 for i in range(volume_batch.size(0)):
-                    anchor_feat = weak_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
-                    positive_feat = strong_spatial_feats[i].unsqueeze(0)  # [1, C, D, H, W]
+                    anchor_feat = weak_decoder_feats[i].unsqueeze(0)  # [1, 256, 112, 112, 80]
+                    positive_feat = strong_decoder_feats[i].unsqueeze(0)
 
-                    # 保证label_map和prob_map维度为5维 [B, 1, D, H, W]
+                    # 保证label_map和prob_map为5维 [B, 1, D, H, W]
                     if i < labeled_bs:
                         label_map = label_batch[i].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         prob_map = None
                     else:
-                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(
-                            1)  # [1, 1, D, H, W]
+                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         label_map = pseudo_label
 
-                    # =================== 这里调用的是RCPS式体素对比学习 ===================
                     contrast_loss += student_model.contrast_learner(
-                        weak_spatial_feats[i].unsqueeze(0),  # 弱增强特征 [1,C,D,H,W]
-                        strong_spatial_feats[i].unsqueeze(0),  # 强增强特征 [1,C,D,H,W]
-                        labels=label_map,  # [1,1,D,H,W]
-                        prob_maps=prob_map  # [1,1,D,H,W] (可选)
+                        anchor_feat,
+                        positive_feat,
+                        labels=label_map,
+                        prob_maps=prob_map
                     )
-                    # =================== 结束 ===================
-
                 contrast_loss = contrast_loss / volume_batch.size(0)
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss
             else:
                 weighted_contrast_loss = 0
+
 
             # 学生反向传播（带梯度裁剪）
             student_loss = supervised_loss + consistency_loss + weighted_contrast_loss

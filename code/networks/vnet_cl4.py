@@ -48,12 +48,14 @@ class RegionAwareContrastiveLearning(nn.Module):
 
         for b in range(B):
             edge_ratios = region_patches[b].mean(dim=(2, 3, 4))
+            print(anchor_patches)
             for p_idx in range(anchor_patches.size(1)):
                 anchor_patch = anchor_patches[b, p_idx]
                 positive_patch = positive_patches[b, p_idx]
                 edge_ratio = edge_ratios[p_idx].item()
                 if edge_ratio > 0.6:
                     self.patch_counts[1] += 1  # 记录边缘区域
+                    print("边缘")
                     if label_patches is not None:
                         label_map = label_patches[b, p_idx]
                     else:
@@ -69,18 +71,20 @@ class RegionAwareContrastiveLearning(nn.Module):
                     valid_count_voxel += 1
                 elif edge_ratio < 0.4:
                     self.patch_counts[0] += 1  # 记录核心区域
+                    print("核心")
                     patch_loss += self._patch_level_contrast_batch(
                         anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx
                     )
                     valid_count_patch += 1
                 else:
                     self.patch_counts[2] += 1  # 记录跳过区域
+                    print("不确定")
                     continue
 
         patch_loss = patch_loss / max(1, valid_count_patch)
         voxel_loss = voxel_loss / max(1, valid_count_voxel)
         total_loss = self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss
-        print(self.patch_counts)
+        print(self.patch_counts.clone())
         return total_loss
 
     def _split_into_patches(self, feats):

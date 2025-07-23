@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from torch import nn
 
 class RegionAwareContrastiveLearning(nn.Module):
-    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.25, hard_neg_k=32):
+    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.475, hard_neg_k=32):
         super().__init__()
         self.temp = temp
         self.patch_size = patch_size
@@ -61,24 +61,28 @@ class RegionAwareContrastiveLearning(nn.Module):
                         prob_map = prob_patches[b, p_idx]
                     else:
                         prob_map = region_patches[b, p_idx]
-                    voxel_loss += self._rcps_voxel_level_contrast(
-                        anchor_patch, positive_patch,
-                        label_map=label_map, prob_map=prob_map
-                    )
+                        # print("边缘= %d",edge_ratio)
+                        voxel_loss += self._rcps_voxel_level_contrast(
+                            anchor_patch, positive_patch,
+                            label_map=label_map, prob_map=prob_map
+                        )
                     valid_count_voxel += 1
                 elif edge_ratio < 0.4:
+                    # print("核心= %d",edge_ratio)
                     self.patch_counts[0] += 1  # 记录核心区域
                     patch_loss += self._patch_level_contrast_batch(
                         anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx
                     )
                     valid_count_patch += 1
                 else:
+                    # print("跳过")
                     self.patch_counts[2] += 1  # 记录跳过区域
                     continue
 
         patch_loss = patch_loss / max(1, valid_count_patch)
         voxel_loss = voxel_loss / max(1, valid_count_voxel)
         total_loss = self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss
+        print(self.patch_counts)
         return total_loss
 
     def _split_into_patches(self, feats):

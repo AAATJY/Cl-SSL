@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from torch import nn
 
 class RegionAwareContrastiveLearning(nn.Module):
-    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.475, hard_neg_k=32):
+    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.475, hard_neg_k=8):
         super().__init__()
         self.temp = temp
         self.patch_size = patch_size

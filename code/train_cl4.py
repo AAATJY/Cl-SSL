@@ -123,7 +123,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=3, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=150, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 # 🆕 新增RCPS相关参数
@@ -390,14 +390,12 @@ if __name__ == "__main__":
                         pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
                         label_map = pseudo_label
-                    print(1)
                     contrast_loss += student_model.contrast_learner(
                         anchor_feat,
                         positive_feat,
                         labels=label_map,
                         prob_maps=prob_map
                     )
-                    print(2)
                 contrast_loss = contrast_loss / volume_batch.size(0)
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss
@@ -406,22 +404,19 @@ if __name__ == "__main__":
 
 
             # 学生反向传播（带梯度裁剪）
-            print(3)
             student_loss = supervised_loss + consistency_loss + weighted_contrast_loss
             student_optimizer.zero_grad()
-            print(4)
             # 保留计算图供元学习
             with torch.enable_grad():
                 student_loss.backward(retain_graph=True)
+                # student_loss.backward()
             meta_controller.update_weights(masked_consistency)  # 关键修改点
             torch.nn.utils.clip_grad_norm_(student_model.parameters(), args.grad_clip)  # 新增梯度裁剪
             student_optimizer.step()
-            print(5)
             # ========== 阶段3：元学习教师更新 ==========
             # 生成元伪标签（带停止梯度）
             with torch.no_grad():
                 meta_labels = torch.softmax(student_seg_out.detach(), dim=1)
-            print(6)
             # 教师前向
             teacher_outputs = teacher_model(volume_batch, return_contrast_feats=False)
 
@@ -436,7 +431,6 @@ if __name__ == "__main__":
                 teacher_outputs[labeled_bs:],
                 meta_labels[labeled_bs:]
             ).mean()
-            print(7)
             # 动态权重调整
             teacher_weight = mpl_controller.get_teacher_weight()
             teacher_loss = teacher_supervised_loss + teacher_weight * teacher_consistency_loss
@@ -459,7 +453,6 @@ if __name__ == "__main__":
 
             torch.nn.utils.clip_grad_norm_(teacher_model.parameters(), args.grad_clip)  # 教师梯度裁剪
             teacher_optimizer.step()
-            print(8)
             # ========== 阶段4：双向参数同步 ==========
             # 学生->教师软更新
             alpha_teacher = args.teacher_alpha

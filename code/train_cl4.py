@@ -103,7 +103,7 @@ class MPLController:
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/CL-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 parser.add_argument('--exp', type=str, default='train_cl3', help='model_name')
-parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
+parser.add_argument('--max_iterations', type=int, default=13000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
 parser.add_argument('--base_lr', type=float, default=0.01, help='maximum epoch number to train')
@@ -123,7 +123,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=150, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=2000, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 # 🆕 新增RCPS相关参数
@@ -496,7 +496,7 @@ if __name__ == "__main__":
                 # 动态调整对比学习参数
                 if contrast_enabled:
                     epoch_ratio = iter_num / max_iterations
-                    new_threshold = 0.25 + 0.15 * epoch_ratio
+                    new_threshold = 0.4 + 0.15 * epoch_ratio
                     student_model.contrast_learner.edge_threshold = new_threshold
                     student_model.contrast_learner.loss_weights[0] = 1.0 - 0.3 * epoch_ratio
                     student_model.contrast_learner.loss_weights[1] = 0.7 + 0.3 * epoch_ratio

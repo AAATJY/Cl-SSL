@@ -496,11 +496,11 @@ if __name__ == "__main__":
                 # 动态调整对比学习参数
                 if contrast_enabled:
                     epoch_ratio = iter_num / max_iterations
-                    new_threshold = 0.4 + 0.15 * epoch_ratio
+                    new_threshold = 0.42 + 0.15 * epoch_ratio
                     student_model.contrast_learner.edge_threshold = new_threshold
                     student_model.contrast_learner.loss_weights[0] = 1.0 - 0.3 * epoch_ratio
                     student_model.contrast_learner.loss_weights[1] = 0.7 + 0.3 * epoch_ratio
-                    student_model.contrast_learner.topk_neg = int(24 + 8 * epoch_ratio)  # top-K动态调整
+                    student_model.contrast_learner.hard_neg_k = int(24 + 8 * epoch_ratio)  # top-K动态调整
                     logging.info(
                         f"调整对比学习参数: edge_threshold={new_threshold:.3f}, weights={student_model.contrast_learner.loss_weights}")
 

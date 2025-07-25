@@ -1,6 +1,7 @@
 import random
 
 import torch
+from monai.networks.nets import UNet
 import torch.nn.functional as F
 from torch import nn
 
@@ -22,12 +23,17 @@ class RegionAwareContrastiveLearning(nn.Module):
             nn.Conv3d(32, 1, kernel_size=1),
             nn.Sigmoid()
         )
-        self.projector = nn.Sequential(
-            nn.Linear(feat_dim, feat_dim),
-            nn.ReLU(),
-            nn.Linear(feat_dim, 64)
+        self.projector = UNet(
+            dimensions=3,
+            in_channels=feat_dim,
+            out_channels=64,
+            channels=(32, 64),
+            strides=(2,),
+            num_res_units=1
         )
-        self.register_buffer('loss_weights', torch.tensor([1.0, 0.7]))  # [patch, voxel]
+        self.register_buffer('patch_counts', torch.zeros(3))
+        self.register_buffer('loss_weights', torch.tensor([1.0, 0.7, 0.3]))  # patch, voxel, region
+        self.bce_loss = nn.BCELoss()
 
     def forward(self, anchor_feats, positive_feats, labels=None, prob_maps=None):
         self.patch_counts.zero_()
@@ -42,8 +48,10 @@ class RegionAwareContrastiveLearning(nn.Module):
         else:
             label_patches = None
         if prob_maps is not None:
+            region_loss = self.bce_loss(region_probs, prob_maps)
             prob_patches = self._split_into_patches(prob_maps)
         else:
+            region_loss = self.bce_loss(region_probs, prob_maps)
             prob_patches = None
 
         patch_loss = 0
@@ -95,7 +103,7 @@ class RegionAwareContrastiveLearning(nn.Module):
 
         patch_loss = patch_loss / max(1, valid_count_patch)
         voxel_loss = voxel_loss / max(1, valid_count_voxel)
-        total_loss = self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss
+        total_loss = self.loss_weights[0] * patch_loss + self.loss_weights[1] * voxel_loss + self.loss_weights[2] * region_loss
         print(self.patch_counts)
         return total_loss
 
@@ -116,47 +124,74 @@ class RegionAwareContrastiveLearning(nn.Module):
 
     def _patch_level_contrast_batch(self, anchor_patch, positive_patch, anchor_patches, positive_patches, b, p_idx):
         B, N, C, P_d, P_h, P_w = anchor_patches.shape
-        anchor_vec = F.adaptive_avg_pool3d(anchor_patch.unsqueeze(0), 1).squeeze().flatten(0)
-        positive_vec = F.adaptive_avg_pool3d(positive_patch.unsqueeze(0), 1).squeeze().flatten(0)
+
+        # --- 使用 U-Net projector 处理整个 patch，并池化获取向量 ---
+        anchor_feat = anchor_patch.unsqueeze(0)  # [1, C, D, H, W]
+        positive_feat = positive_patch.unsqueeze(0)
+
+        anchor_proj_map = self.projector(anchor_feat)  # [1, 64, D, H, W]
+        positive_proj_map = self.projector(positive_feat)
+
+        anchor_vec = F.adaptive_avg_pool3d(anchor_proj_map, 1).squeeze().flatten(0)  # [64]
+        positive_vec = F.adaptive_avg_pool3d(positive_proj_map, 1).squeeze().flatten(0)
+
+        # --- 构建负样本 ---
         negatives = []
-        negative_indices = [(bb, pp) for bb in range(B) for pp in range(anchor_patches.size(1)) if not (bb == b and pp == p_idx)]
+        negative_indices = [(bb, pp) for bb in range(B) for pp in range(anchor_patches.size(1)) if
+                            not (bb == b and pp == p_idx)]
+
         if len(negative_indices) > self.patch_sample_k:
             negative_indices = random.sample(negative_indices, self.patch_sample_k)
+
         for bb, pp in negative_indices:
             neg_patch = anchor_patches[bb, pp]
-            neg_vec = F.adaptive_avg_pool3d(neg_patch.unsqueeze(0), 1).squeeze().flatten(0)
+            neg_feat = neg_patch.unsqueeze(0)  # [1, C, D, H, W]
+            neg_proj = self.projector(neg_feat)
+            neg_vec = F.adaptive_avg_pool3d(neg_proj, 1).squeeze().flatten(0)  # [64]
             negatives.append(neg_vec)
+
         if not negatives:
             return torch.tensor(0.0, device=anchor_patch.device)
-        negatives = torch.stack(negatives, dim=0)
-        anchor_proj = self.projector(anchor_vec)
-        pos_proj = self.projector(positive_vec)
-        neg_proj = self.projector(negatives)
-        anchor_proj = F.normalize(anchor_proj, dim=0)
-        pos_proj = F.normalize(pos_proj, dim=0)
-        neg_proj = F.normalize(neg_proj, dim=1)
+
+        negatives = torch.stack(negatives, dim=0)  # [K, 64]
+
+        # --- 对比损失 ---
+        anchor_proj = F.normalize(anchor_vec, dim=0)
+        pos_proj = F.normalize(positive_vec, dim=0)
+        neg_proj = F.normalize(negatives, dim=1)
+
         logits = torch.cat([torch.dot(anchor_proj, pos_proj).unsqueeze(0), torch.mv(neg_proj, anchor_proj)], dim=0)
         logits = logits / self.temp
+
         loss = -F.log_softmax(logits, dim=0)[0]
         return loss
 
-    def _rcps_voxel_level_contrast(self, anchor_patch, positive_patch, label_map=None, prob_map=None, voxel_sample_k=256):
-        C, D, H, W = anchor_patch.shape
-        N = D * H * W
-        anchor_vox = anchor_patch.view(C, -1).t()
-        positive_vox = positive_patch.view(C, -1).t()
+    def _rcps_voxel_level_contrast(self, anchor_patch, positive_patch, label_map=None, prob_map=None,
+                                   voxel_sample_k=256):
+        # --- projector 输出 ---
+        anchor_proj_map = self.projector(anchor_patch.unsqueeze(0)).squeeze(0)  # [64, D, H, W]
+        positive_proj_map = self.projector(positive_patch.unsqueeze(0)).squeeze(0)
 
+        C, D, H, W = anchor_proj_map.shape
+        N = D * H * W
+
+        anchor_vox = anchor_proj_map.view(C, -1).t()  # [N, C]
+        positive_vox = positive_proj_map.view(C, -1).t()  # [N, C]
+
+        # --- masking ---
         if prob_map is not None:
             mask = (prob_map.view(-1) > self.edge_threshold)
         else:
             mask = torch.ones(N, dtype=torch.bool, device=anchor_patch.device)
-        anchor_sel = anchor_vox[mask]
-        positive_sel = positive_vox[mask]
+
+        anchor_sel = anchor_vox[mask]  # [N_sel, C]
+        positive_sel = positive_vox[mask]  # [N_sel, C]
         N_sel = anchor_sel.size(0)
+
         if N_sel == 0:
             return torch.tensor(0.0, device=anchor_patch.device)
 
-        # ---- 随机采样 voxel ----
+        # --- 随机采样 voxel ---
         if N_sel > voxel_sample_k:
             sample_idx = torch.randperm(N_sel, device=anchor_sel.device)[:voxel_sample_k]
             anchor_sel = anchor_sel[sample_idx]
@@ -172,6 +207,7 @@ class RegionAwareContrastiveLearning(nn.Module):
             else:
                 labels = None
 
+        # --- 构建正负样本对 ---
         if labels is not None:
             pos_mask = labels.unsqueeze(0) == labels.unsqueeze(1)
             neg_mask = labels.unsqueeze(0) != labels.unsqueeze(1)
@@ -179,16 +215,17 @@ class RegionAwareContrastiveLearning(nn.Module):
             pos_mask = torch.eye(N_sel, dtype=torch.bool, device=anchor_sel.device)
             neg_mask = ~pos_mask
 
-        anchor_proj = F.normalize(self.projector(anchor_sel), dim=1)
-        positive_proj = F.normalize(self.projector(positive_sel), dim=1)
-        sim_matrix = torch.mm(anchor_proj, positive_proj.t()) / self.temp
+        anchor_proj = F.normalize(anchor_sel, dim=1)  # [N_sel, C]
+        positive_proj = F.normalize(positive_sel, dim=1)  # [N_sel, C]
 
-        # 正样本均值
-        pos_sim = sim_matrix * pos_mask  # [N_sel, N_sel]
-        pos_count = pos_mask.sum(dim=1)  # [N_sel]
-        pos_sim_mean = pos_sim.sum(dim=1) / (pos_count + 1e-8)  # [N_sel]
+        sim_matrix = torch.mm(anchor_proj, positive_proj.t()) / self.temp  # [N_sel, N_sel]
 
-        # hard negative mining
+        # --- 正样本均值 ---
+        pos_sim = sim_matrix * pos_mask
+        pos_count = pos_mask.sum(dim=1)
+        pos_sim_mean = pos_sim.sum(dim=1) / (pos_count + 1e-8)
+
+        # --- hard negative mining ---
         hard_negatives = []
         for i in range(N_sel):
             neg_sim = sim_matrix[i][neg_mask[i]]
@@ -197,12 +234,14 @@ class RegionAwareContrastiveLearning(nn.Module):
                 hard_negatives.append(topk_neg_sim)
             else:
                 hard_negatives.append(neg_sim)
-        hard_negatives = torch.stack([F.pad(hn, (0, self.hard_neg_k - hn.numel()), value=0) for hn in hard_negatives],
-                                    dim=0)  # [N_sel, hard_neg_k]
-        neg_sim = hard_negatives
 
+        hard_negatives = torch.stack([
+            F.pad(hn, (0, self.hard_neg_k - hn.numel()), value=0) for hn in hard_negatives
+        ], dim=0)  # [N_sel, hard_neg_k]
+
+        # --- 对比损失计算 ---
         exp_pos = torch.exp(pos_sim_mean)
-        exp_neg = torch.exp(neg_sim).sum(dim=1) + exp_pos
+        exp_neg = torch.exp(hard_negatives).sum(dim=1) + exp_pos
         loss = -torch.log(exp_pos / (exp_neg + 1e-8))
         return loss.mean()
 # 其余Block结构保持不变...

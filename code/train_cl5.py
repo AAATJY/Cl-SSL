@@ -5,7 +5,7 @@
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -100,8 +100,8 @@ class MPLController:
         return torch.sigmoid(torch.tensor(self.current_trend))  # 趋势越好，权重越大
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-# parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
+# parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
 parser.add_argument('--exp', type=str, default='train_cl5', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
@@ -245,8 +245,8 @@ if __name__ == "__main__":
         AugmentationFactory.strong_base_aug(patch_size),
     ])
 
-    labeled_idxs = list(range(16))
-    unlabeled_idxs = list(range(16, 80))
+    labeled_idxs = list(range(8))
+    unlabeled_idxs = list(range(8, 80))
 
     db_train = LAHeart(
         base_dir=train_data_path,

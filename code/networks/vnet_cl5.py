@@ -51,7 +51,7 @@ class RegionAwareContrastiveLearning(nn.Module):
             region_loss = self.bce_loss(region_probs, prob_maps)
             prob_patches = self._split_into_patches(prob_maps)
         else:
-            region_loss = self.bce_loss(region_probs, prob_maps)
+            region_loss = torch.tensor(0.0, device=anchor_feats.device)
             prob_patches = None
 
         patch_loss = 0

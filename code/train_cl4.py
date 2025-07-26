@@ -86,17 +86,6 @@ class MPLController:
             meta_grads.append(meta_grad)
         return meta_grads
 
-    def update(self, student_loss):
-        """更新学生模型损失趋势"""
-        self.student_loss_history.append(student_loss)
-        if len(self.student_loss_history) > self.T:
-            self.student_loss_history.pop(0)
-
-        # 计算趋势变化
-        if len(self.student_loss_history) >= 2:
-            delta = self.student_loss_history[-2] - self.student_loss_history[-1]  # 损失下降为正值
-            self.current_trend = self.alpha * self.current_trend + (1 - self.alpha) * delta
-
     def get_teacher_weight(self):
         """生成教师模型损失权重"""
         return torch.sigmoid(torch.tensor(self.current_trend))  # 趋势越好，权重越大
@@ -221,15 +210,6 @@ if __name__ == "__main__":
     # ================= 增强策略及数据加载 =================
     labeled_aug_in = transforms.Compose([
         WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs())
-    ])
-
-    # 为对比学习创建不同的增强策略
-    labeled_aug_weak = transforms.Compose([
-        WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs())
-    ])
-
-    labeled_aug_strong = transforms.Compose([
-        WeightedWeakAugment(AugmentationFactory.get_strong_weighted_augs())
     ])
 
     labeled_aug_out = transforms.Compose([

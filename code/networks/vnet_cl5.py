@@ -24,7 +24,7 @@ class RegionAwareContrastiveLearning(nn.Module):
             nn.Sigmoid()
         )
         self.projector = UNet(
-            dimensions=3,
+            spatial_dims=3,
             in_channels=feat_dim,
             out_channels=64,
             channels=(32, 64),

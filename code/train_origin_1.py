@@ -254,7 +254,6 @@ if __name__ == "__main__":
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
             unlabeled_volume_batch = volume_batch[labeled_bs:]
-
             # ========== 阶段1：教师模型生成伪标签 ==========
             with torch.no_grad():
                 T = 8  # 增强次数
@@ -264,7 +263,7 @@ if __name__ == "__main__":
                     for _ in range(T // 2):
                         noise = torch.randn_like(weak_volume_batch) * current_strength
                         aug_inputs = weak_volume_batch + noise
-                        aug_preds.append(teacher_model(aug_inputs)[0])
+                        aug_preds.append(teacher_model(aug_inputs))
                     # 3D旋转增强（修正版本）
                     for _ in range(T // 2):
                         angle = random.uniform(-10, 10) * current_strength
@@ -284,13 +283,12 @@ if __name__ == "__main__":
                             padding_mode='zeros',
                             align_corners=False
                         )
-                        aug_preds.append(teacher_model(aug_inputs)[0])
+                        aug_preds.append(teacher_model(aug_inputs))
                 else:
-                    print("启用教师模型混合增强")
                     for _ in range(T // 2):
                         noise = torch.randn_like(unlabeled_volume_batch) * current_strength
                         aug_inputs = unlabeled_volume_batch + noise
-                        aug_preds.append(teacher_model(aug_inputs)[0])
+                        aug_preds.append(teacher_model(aug_inputs))
                     # 3D旋转增强（修正版本）
                     for _ in range(T // 2):
                         angle = random.uniform(-10, 10) * current_strength
@@ -310,7 +308,7 @@ if __name__ == "__main__":
                             padding_mode='zeros',
                             align_corners=False
                         )
-                        aug_preds.append(teacher_model(aug_inputs)[0])
+                        aug_preds.append(teacher_model(aug_inputs))
 
                 # 集成预测结果
                 teacher_outputs = torch.stack(aug_preds).mean(dim=0)

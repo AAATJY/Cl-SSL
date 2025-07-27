@@ -1,5 +1,5 @@
 """
-
+尝试把教师模型的输入更换为只进行过弱增强的模型，或者前5000轮弱增强，后10000轮强弱混合
 """
 
 import argparse
@@ -260,31 +260,57 @@ if __name__ == "__main__":
                 T = 8  # 增强次数
                 aug_preds = []
                 # 噪声扰动增强
-                for _ in range(T // 2):
-                    noise = torch.randn_like(unlabeled_volume_batch) * current_strength
-                    aug_inputs = unlabeled_volume_batch + noise
-                    aug_preds.append(teacher_model(aug_inputs))
+                if iter_num < args.switch_iter:
+                    for _ in range(T // 2):
+                        noise = torch.randn_like(weak_volume_batch) * current_strength
+                        aug_inputs = weak_volume_batch + noise
+                        aug_preds.append(teacher_model(aug_inputs)[0])
+                    # 3D旋转增强（修正版本）
+                    for _ in range(T // 2):
+                        angle = random.uniform(-10, 10) * current_strength
+                        theta = torch.zeros((weak_volume_batch.size(0), 3, 4),
+                                            device=weak_volume_batch.device)
+                        theta[:, 0, 0] = np.cos(np.radians(angle))
+                        theta[:, 0, 1] = -np.sin(np.radians(angle))
+                        theta[:, 1, 0] = np.sin(np.radians(angle))
+                        theta[:, 1, 1] = np.cos(np.radians(angle))
+                        theta[:, 2, 2] = 1.0
 
-                # 3D旋转增强（修正版本）
-                for _ in range(T // 2):
-                    angle = random.uniform(-10, 10) * current_strength
-                    theta = torch.zeros((unlabeled_volume_batch.size(0), 3, 4),
-                                        device=unlabeled_volume_batch.device)
-                    theta[:, 0, 0] = np.cos(np.radians(angle))
-                    theta[:, 0, 1] = -np.sin(np.radians(angle))
-                    theta[:, 1, 0] = np.sin(np.radians(angle))
-                    theta[:, 1, 1] = np.cos(np.radians(angle))
-                    theta[:, 2, 2] = 1.0
+                        grid = F.affine_grid(theta, weak_volume_batch.size(), align_corners=False)
+                        aug_inputs = F.grid_sample(
+                            weak_volume_batch,
+                            grid,
+                            mode='bilinear',
+                            padding_mode='zeros',
+                            align_corners=False
+                        )
+                        aug_preds.append(teacher_model(aug_inputs)[0])
+                else:
+                    print("启用教师模型混合增强")
+                    for _ in range(T // 2):
+                        noise = torch.randn_like(unlabeled_volume_batch) * current_strength
+                        aug_inputs = unlabeled_volume_batch + noise
+                        aug_preds.append(teacher_model(aug_inputs)[0])
+                    # 3D旋转增强（修正版本）
+                    for _ in range(T // 2):
+                        angle = random.uniform(-10, 10) * current_strength
+                        theta = torch.zeros((unlabeled_volume_batch.size(0), 3, 4),
+                                            device=unlabeled_volume_batch.device)
+                        theta[:, 0, 0] = np.cos(np.radians(angle))
+                        theta[:, 0, 1] = -np.sin(np.radians(angle))
+                        theta[:, 1, 0] = np.sin(np.radians(angle))
+                        theta[:, 1, 1] = np.cos(np.radians(angle))
+                        theta[:, 2, 2] = 1.0
 
-                    grid = F.affine_grid(theta, unlabeled_volume_batch.size(), align_corners=False)
-                    aug_inputs = F.grid_sample(
-                        unlabeled_volume_batch,
-                        grid,
-                        mode='bilinear',
-                        padding_mode='zeros',
-                        align_corners=False
-                    )
-                    aug_preds.append(teacher_model(aug_inputs))
+                        grid = F.affine_grid(theta, unlabeled_volume_batch.size(), align_corners=False)
+                        aug_inputs = F.grid_sample(
+                            unlabeled_volume_batch,
+                            grid,
+                            mode='bilinear',
+                            padding_mode='zeros',
+                            align_corners=False
+                        )
+                        aug_preds.append(teacher_model(aug_inputs)[0])
 
                 # 集成预测结果
                 teacher_outputs = torch.stack(aug_preds).mean(dim=0)

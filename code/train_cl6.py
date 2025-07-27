@@ -316,6 +316,7 @@ if __name__ == "__main__":
                         )
                         aug_preds.append(teacher_model(aug_inputs)[0])
                 else:
+                    print("启用教师模型混合增强")
                     for _ in range(T // 2):
                         noise = torch.randn_like(unlabeled_volume_batch) * current_strength
                         aug_inputs = unlabeled_volume_batch + noise

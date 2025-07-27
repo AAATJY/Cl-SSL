@@ -1,21 +1,11 @@
 """
-该版本训练文件为train_version1_4_1的微调版本,修改了部分数据增强内容,该版本出现最好效果
-10000次 [0.91649896 0.84644339 5.11912266 1.59941233]
-9000次 [0.91657619 0.84658736 5.02567032 1.72157527]
-8000次 [0.91565889 0.84505913 5.44673189 1.8460723 ]
-7000次 [0.90287637 0.82477628 5.94379155 1.74579329]
-6000次 [0.91604591 0.84564078 5.05759906 1.54259083]
-5000次 [0.9098575  0.83527121 5.7379694  1.4818218 ]
-4000次 [0.9097894  0.83561732 5.70145134 1.71892111]
-3000次 [0.9029867  0.82526546 5.91504336 1.69594752]
-2000次 [0.89327485 0.80858138 8.65349658 2.22332091]
-1000次 [0.85868086  0.76235688 12.78929364  3.6132051 ]
+
 """
 
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -46,9 +36,6 @@ class AugmentationController:
         self.max_iter = max_iter
         # 新增动态增强参数
         self.current_strength = 0.1  # 初始增强强度
-
-    def get_alpha(self):
-        return min(self.iter / (self.max_iter // 2), 1.0)
 
     def get_strength(self):
         """动态增强强度"""
@@ -97,16 +84,6 @@ class MPLController:
             meta_grads.append(meta_grad)
         return meta_grads
 
-    def update(self, student_loss):
-        """更新学生模型损失趋势"""
-        self.student_loss_history.append(student_loss)
-        if len(self.student_loss_history) > self.T:
-            self.student_loss_history.pop(0)
-
-        # 计算趋势变化
-        if len(self.student_loss_history) >= 2:
-            delta = self.student_loss_history[-2] - self.student_loss_history[-1]  # 损失下降为正值
-            self.current_trend = self.alpha * self.current_trend + (1 - self.alpha) * delta
 
     def get_teacher_weight(self):
         """生成教师模型损失权重"""
@@ -114,8 +91,8 @@ class MPLController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_version1_4_1_1', help='model_name')
-parser.add_argument('--max_iterations', type=int, default=10000, help='maximum epoch number to train')
+parser.add_argument('--exp', type=str, default='train_version_origin', help='model_name')
+parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
 parser.add_argument('--base_lr', type=float, default=0.01, help='maximum epoch number to train')

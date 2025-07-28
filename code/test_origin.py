@@ -6,11 +6,11 @@ from networks.vnet_version1 import VNet
 from test_util_origin import test_all_case
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+# parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 
-# parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/MeTi/data/2018LA_Seg_Training Set/2018LA_Seg_Training Set/',
-#                     help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_origin_2', help='Model name')
+parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',
+                    help='Dataset root path')
+parser.add_argument('--model', type=str, default='train_version_origin', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',
@@ -62,10 +62,10 @@ def test_calculate_metric(epoch_num):
 ##### MPL MOD END
 
 if __name__ == '__main__':
-    metric = test_calculate_metric(15000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(14000)
-    print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(15000)
+    # print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(14000)
+    # print(f"Results: {metric}\n")
     metric = test_calculate_metric(13000)
     print(f"Results: {metric}\n")
     metric = test_calculate_metric(12000)
@@ -74,18 +74,18 @@ if __name__ == '__main__':
     print(f"Results: {metric}\n")
     metric = test_calculate_metric(10000)
     print(f"Results: {metric}\n")
-    # metric = test_calculate_metric(9000)
-    # print(f"Results: {metric}\n")
-    # metric = test_calculate_metric(8000)
-    # print(f"Results: {metric}\n")
-    # metric = test_calculate_metric(7000)
-    # print(f"Results: {metric}\n")
-    # metric = test_calculate_metric(6000)
-    # print(f"Results: {metric}\n")
-    # metric = test_calculate_metric(5000)
-    # print(f"Results: {metric}\n")
-    # metric = test_calculate_metric(4000)
-    # print(f"Results: {metric}\n")
+    metric = test_calculate_metric(9000)
+    print(f"Results: {metric}\n")
+    metric = test_calculate_metric(8000)
+    print(f"Results: {metric}\n")
+    metric = test_calculate_metric(7000)
+    print(f"Results: {metric}\n")
+    metric = test_calculate_metric(6000)
+    print(f"Results: {metric}\n")
+    metric = test_calculate_metric(5000)
+    print(f"Results: {metric}\n")
+    metric = test_calculate_metric(4000)
+    print(f"Results: {metric}\n")
     # metric = test_calculate_metric(3000)
     # print(f"Results: {metric}\n")
     # metric = test_calculate_metric(2000)

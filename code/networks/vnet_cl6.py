@@ -205,8 +205,23 @@ class RegionAwareContrastiveLearning(nn.Module):
         exp_neg = torch.exp(neg_sim).sum(dim=1) + exp_pos
         loss = -torch.log(exp_pos / (exp_neg + 1e-8))
         return loss.mean()
-# 其余Block结构保持不变...
 
+# 结构注意力模块
+class SEBlock3D(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(SEBlock3D, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool3d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channel, channel // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel, bias=False),
+            nn.Sigmoid()
+        )
+    def forward(self, x):
+        b, c, _, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1, 1)
+        return x * y.expand_as(x), y.view(b, c)  # 返回特征和注意力权重
 class ConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):
         super(ConvBlock, self).__init__()
@@ -350,6 +365,11 @@ class VNet(nn.Module):
         self.block_nine = ConvBlock(1, n_filters, n_filters, normalization=normalization)
         self.out_conv = nn.Conv3d(n_filters, n_classes, 1, padding=0)
 
+        # 结构注意力模块
+        self.se_bottleneck = SEBlock3D(n_filters * 16)
+        self.se_decoder1 = SEBlock3D(n_filters * 8)
+        self.se_decoder2 = SEBlock3D(n_filters * 4)
+
         if has_dropout:
             self.dropout = nn.Dropout3d(p=0.5, inplace=False)
         if mc_dropout:  # 教师模型专用dropout
@@ -394,24 +414,29 @@ class VNet(nn.Module):
         x5 = self.block_five(x4_dw)
         if self.has_dropout:
             x5 = self.dropout(x5)
-        res = [x1, x2, x3, x4, x5]
+        x5_se, att_bottleneck = self.se_bottleneck(x5)
+        res = [x1, x2, x3, x4, x5_se, att_bottleneck]
         return res
 
-    def decoder(self, features, return_spatial_feats=False):
+    # 增加注意力特征返回
+    def decoder(self, features, return_spatial_feats=False, return_attention=False):
         x1 = features[0]
         x2 = features[1]
         x3 = features[2]
         x4 = features[3]
         x5 = features[4]
+        att_bottleneck = features[5]
 
         x5_up = self.block_five_up(x5)
         x5_up = x5_up + x4
+        x5_up_se, att_dec1 = self.se_decoder1(x5_up)
 
-        x6 = self.block_six(x5_up)
+        x6 = self.block_six(x5_up_se)
         x6_up = self.block_six_up(x6)
         x6_up = x6_up + x3
+        x6_up_se, att_dec2 = self.se_decoder2(x6_up)
 
-        x7 = self.block_seven(x6_up)
+        x7 = self.block_seven(x6_up_se)
         x7_up = self.block_seven_up(x7)
         x7_up = x7_up + x2
 
@@ -422,6 +447,8 @@ class VNet(nn.Module):
         x9 = self.block_nine(x8_up)
         if self.has_dropout:
             x9 = self.dropout(x9)
+        if return_attention:
+            return x9, att_bottleneck, att_dec1, att_dec2
         if return_spatial_feats:
             return x9  # [B, n_filters, D, H, W]
         return x9
@@ -434,7 +461,7 @@ class VNet(nn.Module):
         if self.mc_dropout and enable_dropout:
             self.train()
         enc_features = self.encoder(input)
-        contrast_feats = self.contrast_feat_extractor(enc_features[-1])
+        contrast_feats = self.contrast_feat_extractor(enc_features[4])
         if return_decoder_feats:
             dec_features = self.decoder(enc_features, return_spatial_feats=True)
             dec_features_proj = self.decoder_proj(dec_features)
@@ -448,8 +475,15 @@ class VNet(nn.Module):
             # 返回：分割输出，全局对比特征，解码器空间特征（投影后，通道256）
             return seg_out, contrast_feats, dec_features_proj
         elif return_encoder_feats:
-            return seg_out, contrast_feats, enc_features[-1]
+            return seg_out, contrast_feats, enc_features[4]
         elif return_contrast_feats:
             return seg_out, contrast_feats
         else:
             return seg_out
+
+    # 新增：带结构注意力特征的前向
+    def forward_with_attention(self, input):
+        enc_features = self.encoder(input)
+        x9, att_bottleneck, att_dec1, att_dec2 = self.decoder(enc_features, return_attention=True)
+        seg_out = self.out_conv(x9)
+        return seg_out, att_bottleneck, att_dec1, att_dec2

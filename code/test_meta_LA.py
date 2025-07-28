@@ -6,9 +6,9 @@ from networks.vnet_cl4 import VNet
 from test_util import test_all_case
 
 parser = argparse.ArgumentParser()
-# parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 
-parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
+# parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
 parser.add_argument('--model', type=str, default='train_cl4_1', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
@@ -63,10 +63,10 @@ def test_calculate_metric(epoch_num):
 if __name__ == '__main__':
     # metric = test_calculate_metric(15000)
     # print(f"Results: {metric}\n")
-    # metric = test_calculate_metric(14000)
-    # print(f"Results: {metric}\n")
-    metric = test_calculate_metric(13000)
+    metric = test_calculate_metric(14000)
     print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(13000)
+    # print(f"Results: {metric}\n")
     # metric = test_calculate_metric(12000)
     # print(f"Results: {metric}\n")
     # metric = test_calculate_metric(11000)

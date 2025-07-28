@@ -1,6 +1,6 @@
 """
 该设计基于train_cl4修改
-该版本尝试把教师模型的输入更换为只进行过弱增强的模型，或者前5000轮弱增强，后10000轮强弱混合
+该版本尝试加入结构注意力
 """
 
 import argparse
@@ -111,7 +111,6 @@ parser.add_argument('--mc_dropout_rate', type=float, default=0.2, help='MC Dropo
 parser.add_argument('--meta_grad_scale', type=float, default=0.1, help='元梯度缩放系数')
 parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪阈值')
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
-parser.add_argument('--switch_iter', type=float, default=5000, help='教师模型启用混合增强')
 
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
@@ -262,6 +261,7 @@ if __name__ == "__main__":
     iter_num = 0
     max_epoch = max_iterations // len(trainloader) + 1
     lr_ = base_lr
+    lambda_att = 0.05  # 结构注意力一致性损失权重
     # 对比学习启用标志
     contrast_enabled = False
     # ================= 训练循环 =================
@@ -278,7 +278,6 @@ if __name__ == "__main__":
             time2 = time.time()
             # ================= 数据准备 =================
             weak_volume = sampled_batch['image'].cuda()
-            weak_volume_batch = weak_volume[labeled_bs:]
             sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in,meta_controller)
             strong_volume = sampled_batch['image'].cuda()
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
@@ -290,57 +289,30 @@ if __name__ == "__main__":
                 T = 8  # 增强次数
                 aug_preds = []
                 # 噪声扰动增强
-                if iter_num < args.switch_iter:
-                    for _ in range(T // 2):
-                        noise = torch.randn_like(weak_volume_batch) * current_strength
-                        aug_inputs = weak_volume_batch + noise
-                        aug_preds.append(teacher_model(aug_inputs)[0])
-                    # 3D旋转增强（修正版本）
-                    for _ in range(T // 2):
-                        angle = random.uniform(-10, 10) * current_strength
-                        theta = torch.zeros((weak_volume_batch.size(0), 3, 4),
-                                            device=weak_volume_batch.device)
-                        theta[:, 0, 0] = np.cos(np.radians(angle))
-                        theta[:, 0, 1] = -np.sin(np.radians(angle))
-                        theta[:, 1, 0] = np.sin(np.radians(angle))
-                        theta[:, 1, 1] = np.cos(np.radians(angle))
-                        theta[:, 2, 2] = 1.0
+                for _ in range(T // 2):
+                    noise = torch.randn_like(unlabeled_volume_batch) * current_strength
+                    aug_inputs = unlabeled_volume_batch + noise
+                    aug_preds.append(teacher_model(aug_inputs)[0])
+                # 3D旋转增强（修正版本）
+                for _ in range(T // 2):
+                    angle = random.uniform(-10, 10) * current_strength
+                    theta = torch.zeros((unlabeled_volume_batch.size(0), 3, 4),
+                                        device=unlabeled_volume_batch.device)
+                    theta[:, 0, 0] = np.cos(np.radians(angle))
+                    theta[:, 0, 1] = -np.sin(np.radians(angle))
+                    theta[:, 1, 0] = np.sin(np.radians(angle))
+                    theta[:, 1, 1] = np.cos(np.radians(angle))
+                    theta[:, 2, 2] = 1.0
 
-                        grid = F.affine_grid(theta, weak_volume_batch.size(), align_corners=False)
-                        aug_inputs = F.grid_sample(
-                            weak_volume_batch,
-                            grid,
-                            mode='bilinear',
-                            padding_mode='zeros',
-                            align_corners=False
-                        )
-                        aug_preds.append(teacher_model(aug_inputs)[0])
-                else:
-                    print("启用教师模型混合增强")
-                    for _ in range(T // 2):
-                        noise = torch.randn_like(unlabeled_volume_batch) * current_strength
-                        aug_inputs = unlabeled_volume_batch + noise
-                        aug_preds.append(teacher_model(aug_inputs)[0])
-                    # 3D旋转增强（修正版本）
-                    for _ in range(T // 2):
-                        angle = random.uniform(-10, 10) * current_strength
-                        theta = torch.zeros((unlabeled_volume_batch.size(0), 3, 4),
-                                            device=unlabeled_volume_batch.device)
-                        theta[:, 0, 0] = np.cos(np.radians(angle))
-                        theta[:, 0, 1] = -np.sin(np.radians(angle))
-                        theta[:, 1, 0] = np.sin(np.radians(angle))
-                        theta[:, 1, 1] = np.cos(np.radians(angle))
-                        theta[:, 2, 2] = 1.0
-
-                        grid = F.affine_grid(theta, unlabeled_volume_batch.size(), align_corners=False)
-                        aug_inputs = F.grid_sample(
-                            unlabeled_volume_batch,
-                            grid,
-                            mode='bilinear',
-                            padding_mode='zeros',
-                            align_corners=False
-                        )
-                        aug_preds.append(teacher_model(aug_inputs)[0])
+                    grid = F.affine_grid(theta, unlabeled_volume_batch.size(), align_corners=False)
+                    aug_inputs = F.grid_sample(
+                        unlabeled_volume_batch,
+                        grid,
+                        mode='bilinear',
+                        padding_mode='zeros',
+                        align_corners=False
+                    )
+                    aug_preds.append(teacher_model(aug_inputs)[0])
                 # 集成预测结果
                 teacher_outputs = torch.stack(aug_preds).mean(dim=0)
                 teacher_outputs = teacher_outputs / args.temperature  # 温度缩放
@@ -353,7 +325,7 @@ if __name__ == "__main__":
 
             # ========== 阶段2：学生模型训练 ==========
             # 原始视图的分割输出
-            student_seg_out, student_contrast_feats = student_model(volume_batch, return_contrast_feats=True)
+            student_seg_out, stu_att_bottleneck, stu_att_dec1, stu_att_dec2 = student_model.forward_with_attention(volume_batch)
 
             # 弱增强视图的特征 (用于对比学习的锚点)
             _, _, weak_decoder_feats = student_model(weak_volume, return_decoder_feats=True)
@@ -381,6 +353,23 @@ if __name__ == "__main__":
             weighted_loss = consistency_dist * mask  # 逐样本加权
             masked_consistency = weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1)
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
+            # ================= 新增：结构注意力一致性损失 =================
+            # 教师模型：对无标签数据做两次不同增强，输出attention特征
+            with torch.no_grad():
+                noise1 = torch.randn_like(unlabeled_volume_batch) * current_strength
+                noise2 = torch.randn_like(unlabeled_volume_batch) * current_strength
+                t1_out, t1_att_bottleneck, t1_att_dec1, t1_att_dec2 = teacher_model.forward_with_attention(
+                    unlabeled_volume_batch + noise1)
+                t2_out, t2_att_bottleneck, t2_att_dec1, t2_att_dec2 = teacher_model.forward_with_attention(
+                    unlabeled_volume_batch + noise2)
+
+            # 结构注意力一致性损失（unlabeled部分）
+            att_loss_bottleneck = F.mse_loss(stu_att_bottleneck[labeled_bs:],
+                                             (t1_att_bottleneck + t2_att_bottleneck) / 2)
+            att_loss_dec1 = F.mse_loss(stu_att_dec1[labeled_bs:], (t1_att_dec1 + t2_att_dec1) / 2)
+            att_loss_dec2 = F.mse_loss(stu_att_dec2[labeled_bs:], (t1_att_dec2 + t2_att_dec2) / 2)
+            att_consistency_loss = att_loss_bottleneck + att_loss_dec1 + att_loss_dec2
+
             # ================= 新增：对比学习损失 =================
             _, _, weak_spatial_feats = student_model(weak_volume, return_encoder_feats=True)
             _, _, strong_spatial_feats = student_model(strong_volume, return_encoder_feats=True)
@@ -413,7 +402,7 @@ if __name__ == "__main__":
 
 
             # 学生反向传播（带梯度裁剪）
-            student_loss = supervised_loss + consistency_loss + weighted_contrast_loss
+            student_loss = supervised_loss + consistency_loss + lambda_att * att_consistency_loss + weighted_contrast_loss
             student_optimizer.zero_grad()
             # 保留计算图供元学习
             with torch.enable_grad():

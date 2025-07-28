@@ -3,17 +3,18 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import argparse
 import torch
 from networks.vnet_version1 import VNet
-from test_util import test_all_case
+from test_util_origin import test_all_case
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 
-# parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_origin_1', help='Model name')
+# parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/MeTi/data/2018LA_Seg_Training Set/2018LA_Seg_Training Set/',
+#                     help='Dataset root path')
+parser.add_argument('--model', type=str, default='train_origin_2', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',
-                    choices=['student', 'teacher', 'contrast_learner'], help='Which model to test')
+                    choices=['student', 'teacher', 'ema'], help='Which model to test')
 ##### MPL MOD END
 FLAGS = parser.parse_args()
 
@@ -44,7 +45,7 @@ def test_calculate_metric(epoch_num):
     elif FLAGS.test_mode == 'teacher':
         net.load_state_dict(checkpoint['teacher'])
     else:  # ema
-        net.load_state_dict(checkpoint['contrast_learner'])
+        net.load_state_dict(checkpoint['ema'])
 
     print("Loaded {} model weights from {}".format(FLAGS.test_mode, save_mode_path))
     net.eval()

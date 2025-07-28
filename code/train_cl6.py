@@ -27,7 +27,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_cl4 import VNet
+from networks.vnet_cl6 import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -90,8 +90,8 @@ class MPLController:
         return torch.sigmoid(torch.tensor(self.current_trend))  # 趋势越好，权重越大
 
 parser = argparse.ArgumentParser()
-# parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
+parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+# parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
 parser.add_argument('--exp', type=str, default='train_cl6', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
@@ -227,8 +227,8 @@ if __name__ == "__main__":
         AugmentationFactory.strong_base_aug(patch_size),
     ])
 
-    labeled_idxs = list(range(8))
-    unlabeled_idxs = list(range(8, 80))
+    labeled_idxs = list(range(16))
+    unlabeled_idxs = list(range(16, 80))
 
     db_train = LAHeart(
         base_dir=train_data_path,

@@ -91,7 +91,7 @@ class MPLController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/CL-SSL/data/2018LA_Seg_Training Set', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_origin_1', help='model_name')
+parser.add_argument('--exp', type=str, default='train_origin_2', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
@@ -110,7 +110,6 @@ parser.add_argument('--mc_dropout_rate', type=float, default=0.2, help='MC Dropo
 parser.add_argument('--meta_grad_scale', type=float, default=0.1, help='元梯度缩放系数')
 parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪阈值')
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
-parser.add_argument('--switch_iter', type=float, default=5000, help='教师模型启用混合增强')
 args = parser.parse_args()
 
 train_data_path = args.root_path
@@ -253,62 +252,35 @@ if __name__ == "__main__":
             sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in,meta_controller)
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
-            unlabeled_volume_batch = volume_batch[labeled_bs:]
             # ========== 阶段1：教师模型生成伪标签 ==========
             with torch.no_grad():
                 T = 8  # 增强次数
                 aug_preds = []
                 # 噪声扰动增强
-                if iter_num < args.switch_iter:
-                    for _ in range(T // 2):
-                        noise = torch.randn_like(weak_volume_batch) * current_strength
-                        aug_inputs = weak_volume_batch + noise
-                        aug_preds.append(teacher_model(aug_inputs))
-                    # 3D旋转增强（修正版本）
-                    for _ in range(T // 2):
-                        angle = random.uniform(-10, 10) * current_strength
-                        theta = torch.zeros((weak_volume_batch.size(0), 3, 4),
-                                            device=weak_volume_batch.device)
-                        theta[:, 0, 0] = np.cos(np.radians(angle))
-                        theta[:, 0, 1] = -np.sin(np.radians(angle))
-                        theta[:, 1, 0] = np.sin(np.radians(angle))
-                        theta[:, 1, 1] = np.cos(np.radians(angle))
-                        theta[:, 2, 2] = 1.0
+                for _ in range(T // 2):
+                    noise = torch.randn_like(weak_volume_batch) * current_strength
+                    aug_inputs = weak_volume_batch + noise
+                    aug_preds.append(teacher_model(aug_inputs))
+                # 3D旋转增强（修正版本）
+                for _ in range(T // 2):
+                    angle = random.uniform(-10, 10) * current_strength
+                    theta = torch.zeros((weak_volume_batch.size(0), 3, 4),
+                                        device=weak_volume_batch.device)
+                    theta[:, 0, 0] = np.cos(np.radians(angle))
+                    theta[:, 0, 1] = -np.sin(np.radians(angle))
+                    theta[:, 1, 0] = np.sin(np.radians(angle))
+                    theta[:, 1, 1] = np.cos(np.radians(angle))
+                    theta[:, 2, 2] = 1.0
 
-                        grid = F.affine_grid(theta, weak_volume_batch.size(), align_corners=False)
-                        aug_inputs = F.grid_sample(
-                            weak_volume_batch,
-                            grid,
-                            mode='bilinear',
-                            padding_mode='zeros',
-                            align_corners=False
-                        )
-                        aug_preds.append(teacher_model(aug_inputs))
-                else:
-                    for _ in range(T // 2):
-                        noise = torch.randn_like(unlabeled_volume_batch) * current_strength
-                        aug_inputs = unlabeled_volume_batch + noise
-                        aug_preds.append(teacher_model(aug_inputs))
-                    # 3D旋转增强（修正版本）
-                    for _ in range(T // 2):
-                        angle = random.uniform(-10, 10) * current_strength
-                        theta = torch.zeros((unlabeled_volume_batch.size(0), 3, 4),
-                                            device=unlabeled_volume_batch.device)
-                        theta[:, 0, 0] = np.cos(np.radians(angle))
-                        theta[:, 0, 1] = -np.sin(np.radians(angle))
-                        theta[:, 1, 0] = np.sin(np.radians(angle))
-                        theta[:, 1, 1] = np.cos(np.radians(angle))
-                        theta[:, 2, 2] = 1.0
-
-                        grid = F.affine_grid(theta, unlabeled_volume_batch.size(), align_corners=False)
-                        aug_inputs = F.grid_sample(
-                            unlabeled_volume_batch,
-                            grid,
-                            mode='bilinear',
-                            padding_mode='zeros',
-                            align_corners=False
-                        )
-                        aug_preds.append(teacher_model(aug_inputs))
+                    grid = F.affine_grid(theta, weak_volume_batch.size(), align_corners=False)
+                    aug_inputs = F.grid_sample(
+                        weak_volume_batch,
+                        grid,
+                        mode='bilinear',
+                        padding_mode='zeros',
+                        align_corners=False
+                    )
+                    aug_preds.append(teacher_model(aug_inputs))
 
                 # 集成预测结果
                 teacher_outputs = torch.stack(aug_preds).mean(dim=0)

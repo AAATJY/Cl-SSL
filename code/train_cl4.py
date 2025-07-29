@@ -391,7 +391,6 @@ if __name__ == "__main__":
             # 保留计算图供元学习
             with torch.enable_grad():
                 student_loss.backward(retain_graph=True)
-                # student_loss.backward()
             meta_controller.update_weights(masked_consistency)  # 关键修改点
             torch.nn.utils.clip_grad_norm_(student_model.parameters(), args.grad_clip)  # 新增梯度裁剪
             student_optimizer.step()

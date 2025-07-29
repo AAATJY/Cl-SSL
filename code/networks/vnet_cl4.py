@@ -181,7 +181,7 @@ class RegionAwareContrastiveLearning(nn.Module):
 """
 
 class RegionAwareContrastiveLearning(nn.Module):
-    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.4,
+    def __init__(self, feat_dim=128, temp=0.1, patch_size=16, edge_threshold=0.42,
                  hard_neg_k=32, patch_sample_k=12, edge_patch_sample_k=24, voxel_sample_k=256):
         super().__init__()
         self.temp = temp

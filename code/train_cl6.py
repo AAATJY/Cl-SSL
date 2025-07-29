@@ -261,7 +261,10 @@ if __name__ == "__main__":
     iter_num = 0
     max_epoch = max_iterations // len(trainloader) + 1
     lr_ = base_lr
-    lambda_att = 0.05  # 结构注意力一致性损失权重
+    lambda_att = 0.1  # 结构注意力一致性损失权重
+    """"
+    lambda_att = 0.05
+    """
     # 对比学习启用标志
     contrast_enabled = False
     # ================= 训练循环 =================
@@ -342,7 +345,10 @@ if __name__ == "__main__":
             loss_seg_dice = losses.dice_loss(outputs_soft[:labeled_bs, 1, :, :, :],label_batch[:labeled_bs] == 1)
             loss_boundary = BoundaryLoss()(outputs_soft[:labeled_bs, 1], (label_batch[:labeled_bs] == 1).float())# 新增损失函数
             loss_focal = focal_criterion(student_seg_out[:labeled_bs], label_batch[:labeled_bs])# 新增损失函数
+            supervised_loss = 0.2*loss_seg + 0.25*loss_seg_dice + 0.3*loss_boundary + 0.25*loss_focal
+            """
             supervised_loss = 0.3*(loss_seg + loss_seg_dice) + 0.4*loss_boundary + 0.3*loss_focal
+            """
 
             # 一致性损失（带动态mask）
             consistency_weight = get_current_consistency_weight(iter_num // 150)

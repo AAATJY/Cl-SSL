@@ -2,6 +2,7 @@
 该版本出现的原因是是因为，突然发现在RegionAwareContrastiveLearning直接调用了体素级对比学习，并没有按照最初的想法，
 在核心区域应用补丁级对比学习，在边缘区域应用体素级对比学习，所以需要对两个文件重新进行设计.该设计基于train_cl修改
 14000轮16/64[0.91769156 0.84845066 4.95492703 1.65828543]目前达到最好结果(2500轮启用，edge_threshold=0.42)
+(2501轮启用，edge_threshold=0.42)
 """
 
 import argparse
@@ -227,8 +228,8 @@ if __name__ == "__main__":
         AugmentationFactory.strong_base_aug(patch_size),
     ])
 
-    labeled_idxs = list(range(8))
-    unlabeled_idxs = list(range(8, 80))
+    labeled_idxs = list(range(16))
+    unlabeled_idxs = list(range(16, 80))
 
     db_train = LAHeart(
         base_dir=train_data_path,

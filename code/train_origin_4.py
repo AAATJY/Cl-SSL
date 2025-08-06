@@ -250,11 +250,12 @@ if __name__ == "__main__":
             sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in,meta_controller)
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
+            unlabeled_volume_batch = volume_batch[labeled_bs:]
             # ========== 阶段1：教师模型生成伪标签 ==========
             with torch.no_grad():
-
-                # 集成预测结果
-                teacher_outputs = torch.stack(aug_preds).mean(dim=0)
+                # 🛠️ 去掉噪声扰动增强和3D旋转增强，只做一遍弱增强
+                # 直接用弱增强后的输入获得教师输出
+                teacher_outputs = teacher_model(unlabeled_volume_batch)
                 teacher_outputs = teacher_outputs / args.temperature  # 温度缩放
 
                 # 动态置信度阈值

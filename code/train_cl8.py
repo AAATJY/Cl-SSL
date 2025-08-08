@@ -91,7 +91,7 @@ class MPLController:
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 # parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
-parser.add_argument('--exp', type=str, default='train_cl7_1', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cl8', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
@@ -225,8 +225,8 @@ if __name__ == "__main__":
         AugmentationFactory.strong_base_aug(patch_size),
     ])
 
-    labeled_idxs = list(range(16))
-    unlabeled_idxs = list(range(16, 80))
+    labeled_idxs = list(range(8))
+    unlabeled_idxs = list(range(8, 80))
 
     db_train = LAHeart(
         base_dir=train_data_path,

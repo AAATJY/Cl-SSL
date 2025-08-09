@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 
 # parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_cl7', help='Model name')
+parser.add_argument('--model', type=str, default='train_cl7_1', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',
@@ -67,8 +67,8 @@ if __name__ == '__main__':
     # print(f"Results: {metric}\n")
     # metric = test_calculate_metric(13000)
     # print(f"Results: {metric}\n")
-    # metric = test_calculate_metric(12000)
-    # print(f"Results: {metric}\n")
+    metric = test_calculate_metric(12000)
+    print(f"Results: {metric}\n")
     metric = test_calculate_metric(11000)
     print(f"Results: {metric}\n")
     metric = test_calculate_metric(10000)
@@ -89,5 +89,5 @@ if __name__ == '__main__':
     print(f"Results: {metric}\n")
     metric = test_calculate_metric(2000)
     print(f"Results: {metric}\n")
-    metric = test_calculate_metric(1000)
-    print(f"Results: {metric}\n")
+    # metric = test_calculate_metric(1000)
+    # print(f"Results: {metric}\n")

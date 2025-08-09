@@ -1,5 +1,8 @@
 """
-在train_cl4和train_origin_3进行了融合
+该版本出现的原因是是因为，突然发现在RegionAwareContrastiveLearning直接调用了体素级对比学习，并没有按照最初的想法，
+在核心区域应用补丁级对比学习，在边缘区域应用体素级对比学习，所以需要对两个文件重新进行设计.该设计基于train_cl修改
+14000轮16/64[0.91769156 0.84845066 4.95492703 1.65828543]目前达到最好结果(2500轮启用，edge_threshold=0.42)
+(2501轮启用，edge_threshold=0.42)
 """
 
 import argparse
@@ -280,20 +283,12 @@ if __name__ == "__main__":
             strong_volume_batch = sampled_batch['image'].cuda()
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
-            unlabeled_volume_batch = volume_batch[labeled_bs:]
 
             # ========== 阶段1：教师模型生成伪标签 ==========
             with torch.no_grad():
-                T = 8  # 增强次数
-                aug_preds = []
-                # 噪声扰动增强
-                for _ in range(T // 2):
-                    noise = torch.randn_like(weak_volume) * current_strength
-                    aug_inputs = unlabeled_volume_batch + noise
-                    aug_preds.append(teacher_model(aug_inputs)[0])
-
-                # 集成预测结果
-                teacher_outputs = torch.stack(aug_preds).mean(dim=0)
+                # 🛠️ 去掉噪声扰动增强和3D旋转增强，只做一遍弱增强
+                # 直接用弱增强后的输入获得教师输出
+                teacher_outputs = teacher_model(weak_volume_batch)
                 teacher_outputs = teacher_outputs / args.temperature  # 温度缩放
 
                 # 动态置信度阈值

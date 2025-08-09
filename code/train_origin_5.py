@@ -90,8 +90,8 @@ class MPLController:
         return torch.sigmoid(torch.tensor(self.current_trend))  # 趋势越好，权重越大
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_origin_4', help='model_name')
+parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+parser.add_argument('--exp', type=str, default='train_origin_5', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -254,8 +254,6 @@ if __name__ == "__main__":
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
             # ========== 阶段1：教师模型生成伪标签 ==========
             with torch.no_grad():
-                # 🛠️ 去掉噪声扰动增强和3D旋转增强，只做一遍弱增强
-                # 直接用弱增强后的输入获得教师输出
                 teacher_outputs = teacher_model(weak_volume_batch)
                 teacher_outputs = teacher_outputs / args.temperature  # 温度缩放
 

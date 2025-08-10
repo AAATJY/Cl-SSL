@@ -204,8 +204,8 @@ if __name__ == "__main__":
         AugmentationFactory.strong_base_aug(patch_size),
     ])
 
-    labeled_idxs = list(range(8))
-    unlabeled_idxs = list(range(8, 80))
+    labeled_idxs = list(range(16))
+    unlabeled_idxs = list(range(16, 80))
 
     db_train = LAHeart(
         base_dir=train_data_path,

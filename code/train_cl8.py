@@ -1,8 +1,5 @@
 """
-该版本出现的原因是是因为，突然发现在RegionAwareContrastiveLearning直接调用了体素级对比学习，并没有按照最初的想法，
-在核心区域应用补丁级对比学习，在边缘区域应用体素级对比学习，所以需要对两个文件重新进行设计.该设计基于train_cl修改
-14000轮16/64[0.91769156 0.84845066 4.95492703 1.65828543]目前达到最好结果(2500轮启用，edge_threshold=0.42)
-(2501轮启用，edge_threshold=0.42)
+在train_cl4和train_origin_3进行了融合
 """
 
 import argparse
@@ -94,7 +91,7 @@ class MPLController:
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 # parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
-parser.add_argument('--exp', type=str, default='train_cl8', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cl7_1', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
@@ -228,8 +225,8 @@ if __name__ == "__main__":
         AugmentationFactory.strong_base_aug(patch_size),
     ])
 
-    labeled_idxs = list(range(8))
-    unlabeled_idxs = list(range(8, 80))
+    labeled_idxs = list(range(16))
+    unlabeled_idxs = list(range(16, 80))
 
     db_train = LAHeart(
         base_dir=train_data_path,
@@ -283,16 +280,18 @@ if __name__ == "__main__":
             strong_volume_batch = sampled_batch['image'].cuda()
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
+            unlabeled_volume_batch = volume_batch[labeled_bs:]
 
             # ========== 阶段1：教师模型生成伪标签 ==========
             with torch.no_grad():
-                teacher_outputs = teacher_model(weak_volume)
+                teacher_outputs = teacher_model(weak_volume,return_contrast_feats=False)
                 teacher_outputs = teacher_outputs / args.temperature  # 温度缩放
 
                 # 动态置信度阈值
                 probs = F.softmax(teacher_outputs, dim=1)
                 max_probs, _ = torch.max(probs, dim=1)
-                threshold = args.base_threshold + (1 - args.base_threshold) * ramps.sigmoid_rampup(iter_num,max_iterations)
+                threshold = args.base_threshold + (1 - args.base_threshold) * ramps.sigmoid_rampup(iter_num,
+                                                                                                   max_iterations)
                 mask = (max_probs > threshold).float().unsqueeze(1)  # 保持维度对齐
 
             # ========== 阶段2：学生模型训练 ==========

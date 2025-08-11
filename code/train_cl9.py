@@ -1,15 +1,26 @@
 """
-把循环中的3D旋转增强和噪声扰动增强取消，同时去掉强增强
+将区域感知对比学习（RACL）稳健地引入本训练脚本：
+- 使用教师模型的解码器空间特征作为正样本，学生模型特征作为锚点，避免强增广带来的不稳定
+- 延迟启用 + 线性warmup的对比权重
+- 仅在边缘区域进行体素级对比、核心区域进行补丁级对比并进行采样控制，降低方差
+- 每2500 iter动态调整阈值/权重/Top-K，稳定收敛
+- 保持原有监督+一致性训练结构与参数基本不变
+
+实测建议默认参数：
+- contrast_weight=0.06~0.08（默认0.07）
+- contrast_start_iter=3000
+- patch_size=16, temp=0.1, hard_neg_k=32
 加速版：引入AMP/TF32、DataLoader提速、RACL降采样与间隔计算、channels_last_3d与可选compile
 """
 
 import argparse
 import logging
 import os
+
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import math
 from utils.meta_augment_2 import (
-    MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
+    MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
 )
 import random
 import shutil
@@ -33,25 +44,30 @@ from networks.vnet_cl4 import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
+
 class AugmentationController:
     def __init__(self, max_iter):
         self.iter = 0
         self.max_iter = max_iter
         self.current_strength = 0.1  # 初始增强强度
+
     def get_strength(self):
         return self.current_strength
+
     def step(self):
         self.iter = min(self.iter + 1, self.max_iter)
         self.current_strength = 0.1 + 0.4 * (self.iter / self.max_iter)
 
+
 # MPL损失控制器（保持原逻辑）
 class MPLController:
-    def __init__(self, T=5, alpha=0.9,grad_scale=0.1):
+    def __init__(self, T=5, alpha=0.9, grad_scale=0.1):
         self.T = T
         self.alpha = alpha
         self.grad_scale = grad_scale
         self.student_loss_history = []
         self.current_trend = 0.0
+
     def compute_meta_grad(self, teacher_loss, student_params):
         teacher_loss.requires_grad_(True)
         grad_teacher = torch.autograd.grad(
@@ -74,11 +90,14 @@ class MPLController:
             meta_grad = -self.grad_scale * (grad_student[0] if grad_student[0] is not None else 0.0)
             meta_grads.append(meta_grad)
         return meta_grads
+
     def get_teacher_weight(self):
         return torch.sigmoid(torch.tensor(self.current_trend))
 
+
 parser = argparse.ArgumentParser()
-parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/',
+                    help='Name of Experiment')
 parser.add_argument('--exp', type=str, default='train_origin_5_fast_racl', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
@@ -105,7 +124,7 @@ parser.add_argument('--compile', type=int, default=0, help='启用torch.compile(
 parser.add_argument('--num_workers', type=int, default=8, help='DataLoader workers 数量')
 # RACL控制（温和取样，降低计算量）
 parser.add_argument('--contrast_weight', type=float, default=0.07, help='对比学习损失权重（小、稳）')
-parser.add_argument('--contrast_start_iter', type=int, default=3, help='启用对比学习的迭代次数（延迟启动）')
+parser.add_argument('--contrast_start_iter', type=int, default=3000, help='启用对比学习的迭代次数（延迟启动）')
 parser.add_argument('--contrast_interval', type=int, default=2, help='每隔多少iter计算一次RACL（>=1，2表示隔一次）')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
@@ -145,16 +164,20 @@ else:
 num_classes = 2
 patch_size = (112, 112, 80)
 
+
 def label_smoothing(labels, factor=0.1):
     return labels * (1 - factor) + factor / labels.size(1)
 
+
 def get_current_consistency_weight(epoch):
     return args.consistency * ramps.sigmoid_rampup(epoch, args.consistency_rampup)
+
 
 def update_ema_variables(model, ema_model, alpha, global_step):
     alpha = min(1 - 1 / (global_step + 1), alpha)
     for ema_param, param in zip(ema_model.parameters(), model.parameters()):
         ema_param.data.mul_(alpha).add_(param.data, alpha=1 - alpha)
+
 
 if __name__ == "__main__":
     if not os.path.exists(snapshot_path):
@@ -166,6 +189,7 @@ if __name__ == "__main__":
                         format='[%(asctime)s.%(msecs)03d] %(message)s', datefmt='%H:%M:%S')
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
     logging.info(str(args))
+
 
     # ======== 模型创建（带RACL） ========
     def create_model(teacher=False):
@@ -189,6 +213,7 @@ if __name__ == "__main__":
             pass
         return model
 
+
     student_model = create_model(teacher=False)
     teacher_model = create_model(teacher=True)
     teacher_model.load_state_dict(student_model.state_dict(), strict=False)
@@ -210,7 +235,8 @@ if __name__ == "__main__":
 
     # 控制器
     mpl_controller = MPLController(T=10, alpha=0.95)
-    meta_controller = MetaAugController(num_aug=6,init_temp=0.6,init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
+    meta_controller = MetaAugController(num_aug=6, init_temp=0.6,
+                                        init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
 
     # 数据与增强
@@ -243,8 +269,11 @@ if __name__ == "__main__":
         labeled_idxs=labeled_idxs
     )
     batch_sampler = TwoStreamBatchSampler(labeled_idxs, unlabeled_idxs, batch_size, batch_size - labeled_bs)
+
+
     def worker_init_fn(worker_id):
         random.seed(args.seed + worker_id)
+
 
     # DataLoader 提速：更多worker、prefetch与持久worker
     trainloader = DataLoader(
@@ -287,7 +316,7 @@ if __name__ == "__main__":
             aug_controller.step()
 
             # 数据准备（非阻塞+channels_last_3d）
-            sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in,meta_controller)
+            sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in, meta_controller)
             volume_batch = sampled_batch['image'].cuda(non_blocking=True)
             label_batch = sampled_batch['label'].cuda(non_blocking=True)
             try:
@@ -297,16 +326,19 @@ if __name__ == "__main__":
 
             # ====== 教师伪标签（同视图，稳定） ======
             with torch.no_grad(), autocast(enabled=bool(args.amp)):
-                t_seg_all, _, t_dec_feats = teacher_model(volume_batch, return_contrast_feats=False, return_decoder_feats=True)
+                t_seg_all, _, t_dec_feats = teacher_model(volume_batch, return_contrast_feats=False,
+                                                          return_decoder_feats=True)
                 teacher_logits_u = t_seg_all[labeled_bs:] / args.temperature
                 probs = F.softmax(teacher_logits_u, dim=1)
                 max_probs, _ = torch.max(probs, dim=1)
-                threshold = args.base_threshold + (1 - args.base_threshold) * ramps.sigmoid_rampup(iter_num, max_iterations)
+                threshold = args.base_threshold + (1 - args.base_threshold) * ramps.sigmoid_rampup(iter_num,
+                                                                                                   max_iterations)
                 mask = (max_probs > threshold).float().unsqueeze(1)
 
             # ====== 学生前向与损失（AMP） ======
             with autocast(enabled=bool(args.amp)):
-                s_seg_all, _, s_dec_feats = student_model(volume_batch, return_contrast_feats=False, return_decoder_feats=True)
+                s_seg_all, _, s_dec_feats = student_model(volume_batch, return_contrast_feats=False,
+                                                          return_decoder_feats=True)
 
                 # 监督损失
                 focal_criterion = FocalLoss(alpha=0.8, gamma=2)
@@ -316,7 +348,7 @@ if __name__ == "__main__":
                 loss_seg_dice = losses.dice_loss(outputs_soft[:labeled_bs, 1], (label_batch[:labeled_bs] == 1))
                 loss_boundary = BoundaryLoss()(outputs_soft[:labeled_bs, 1], (label_batch[:labeled_bs] == 1).float())
                 loss_focal = focal_criterion(s_seg_all[:labeled_bs], label_batch[:labeled_bs])
-                supervised_loss = 0.3*(loss_seg + loss_seg_dice) + 0.4*loss_boundary + 0.3*loss_focal
+                supervised_loss = 0.3 * (loss_seg + loss_seg_dice) + 0.4 * loss_boundary + 0.3 * loss_focal
 
                 # 一致性损失
                 consistency_weight = get_current_consistency_weight(iter_num // 150)
@@ -336,8 +368,8 @@ if __name__ == "__main__":
                     for i in range(B):
                         if args.contrast_unlabeled_only and i < labeled_bs:
                             continue
-                        anchor_feat = s_dec_feats[i].unsqueeze(0)     # 学生锚
-                        positive_feat = t_dec_feats[i].unsqueeze(0)   # 教师正样本
+                        anchor_feat = s_dec_feats[i].unsqueeze(0)  # 学生锚
+                        positive_feat = t_dec_feats[i].unsqueeze(0)  # 教师正样本
                         if i < labeled_bs:
                             label_map = label_batch[i].unsqueeze(0).unsqueeze(1)
                             prob_map = None
@@ -445,11 +477,13 @@ if __name__ == "__main__":
                 logging.info('iter %d : loss=%.6f cons_w=%.4f contrast=%s' %
                              (iter_num, float(student_loss), float(consistency_weight), str(contrast_enabled)))
 
+
             # 余弦退火与RACL动态
             def adjust_learning_rate(optimizer, iteration, max_iter, base_lr):
                 lr = base_lr * (math.cos(math.pi * iteration / max_iter) + 1) / 2
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = lr
+
 
             if iter_num % 2500 == 0:
                 adjust_learning_rate(student_optimizer, iter_num, max_iterations, base_lr)
@@ -461,7 +495,8 @@ if __name__ == "__main__":
                     student_model.contrast_learner.loss_weights[0] = 1.0 - 0.25 * epoch_ratio
                     student_model.contrast_learner.loss_weights[1] = 0.7 + 0.25 * epoch_ratio
                     student_model.contrast_learner.hard_neg_k = int(32 + 8 * epoch_ratio)
-                    logging.info(f"[RACL] edge_thr={new_threshold:.3f}, weights={student_model.contrast_learner.loss_weights.tolist()}, topK={student_model.contrast_learner.hard_neg_k}")
+                    logging.info(
+                        f"[RACL] edge_thr={new_threshold:.3f}, weights={student_model.contrast_learner.loss_weights.tolist()}, topK={student_model.contrast_learner.hard_neg_k}")
 
             if iter_num % 1000 == 0:
                 torch.save({

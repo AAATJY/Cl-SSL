@@ -1,6 +1,4 @@
-"""
-在train_cl4和train_origin_3进行了融合
-"""
+
 
 import argparse
 import logging
@@ -112,7 +110,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 # 新增对比学习参数
 parser.add_argument('--contrast_weight', type=float, default=0.1, help='对比学习损失权重')
-parser.add_argument('--contrast_start_iter', type=int, default=2500, help='启用对比学习的迭代次数')
+parser.add_argument('--contrast_start_iter', type=int, default=2000, help='启用对比学习的迭代次数')
 parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比学习补丁大小')
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 # 🆕 新增RCPS相关参数

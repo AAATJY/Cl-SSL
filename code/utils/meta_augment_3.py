@@ -5,66 +5,56 @@ from torch import optim
 import torch.nn as nn
 import torch.nn.functional as F
 from dataloaders.la_version1_3 import (
-    RandomRotFlip,RandomCrop,ElasticDeformation,GaussianBlur,ContrastAdjust,GammaCorrection,LocalShuffle,RandomNoise,RandomOcclusion,EdgeEnhancement,MotionArtifact,CutMix3D, MixUp3D,ToTensor
+    RandomRotFlip, RandomCrop, ElasticDeformation, GaussianBlur, ContrastAdjust,
+    GammaCorrection, LocalShuffle, RandomNoise, RandomOcclusion, EdgeEnhancement,
+    MotionArtifact, CutMix3D, MixUp3D, ToTensor
 )
 
 
 class MetaAugController(nn.Module):
     def __init__(self, num_aug, init_temp=0.1, init_weights=None):
         super().__init__()
-        # 初始化权重参数
         if init_weights is not None:
             if len(init_weights) != num_aug:
                 raise ValueError(f"init_weights长度({len(init_weights)})必须与num_aug({num_aug})一致")
             self.weights = nn.Parameter(torch.tensor(init_weights, dtype=torch.float32))
         else:
             self.weights = nn.Parameter(torch.ones(num_aug))
-
-        # 其他参数
         self.temperature = init_temp
         self.optimizer = optim.Adam([self.weights], lr=1e-4)
         self.history = []
 
     def get_probs(self):
-        """获取归一化后的增强概率分布（带温度系数）"""
         return F.softmax(self.weights / self.temperature, dim=-1)
 
     def record_batch(self, aug_indices):
-        """记录批次增强选择"""
         self.history.append({
-            'indices': aug_indices,  # 形状为[batch_size]的Tensor
+            'indices': aug_indices,
         })
 
     def update_weights(self, sample_loss):
         self.optimizer.zero_grad()
         grad_dict = {i: 0.0 for i in range(len(self.weights))}
-        probs = self.get_probs()  # 获取增强策略的概率分布
-        # 遍历每个样本
+        probs = self.get_probs()
         for loss_value, record in zip(sample_loss, self.history):
-            aug_indices = record['indices']  # 当前样本选择的增强策略索引
-            loss_value = loss_value.unsqueeze(0)  # 确保损失是标量张量
-
-            # 基于增强概率对损失进行加权
+            aug_indices = record['indices']
+            loss_value = loss_value.unsqueeze(0)
             weighted_loss = loss_value * probs[aug_indices].sum()
-
-            # 计算该样本损失对权重的梯度
             grads = torch.autograd.grad(
                 outputs=weighted_loss,
                 inputs=self.weights,
                 retain_graph=True,
                 create_graph=False,
-                allow_unused=True  # 允许未使用的参数
+                allow_unused=True
             )[0]
-            # 对未选择的增强策略梯度置零
+            if grads is None:
+                continue
             for i in range(len(grads)):
-                if i not in aug_indices:  # aug_indices 是被选择的增强策略索引
+                if i not in aug_indices:
                     grads[i] = 0
-
-            # 累计梯度到对应的增强策略索引
             for idx in aug_indices:
                 grad_dict[idx] += grads[idx].item()
 
-        # 更新权重
         if any(g != 0 for g in grad_dict.values()):
             grad_tensor = torch.tensor(
                 [grad_dict[i] for i in range(len(self.weights))],
@@ -73,18 +63,14 @@ class MetaAugController(nn.Module):
             self.weights.grad = grad_tensor
             torch.nn.utils.clip_grad_norm_([self.weights], 5.0)
             self.optimizer.step()
-            # **归一化权重**
         with torch.no_grad():
-            self.weights.data = self.weights.data / self.weights.data.sum()  # 线性归一化
-            # 或者使用 softmax
-            # self.weights.data = torch.softmax(self.weights.data / self.temperature, dim=0)
-        # 清空历史记录
+            s = self.weights.data.sum()
+            if s.abs() > 1e-8:
+                self.weights.data = self.weights.data / s
         self.history = []
 
 
-# ------------------- 重构增强工厂 -------------------
 class AugmentationFactory:
-    # 基础固定增强（无需加权）
     @staticmethod
     def weak_base_aug(patch_size):
         return transforms.Compose([
@@ -100,9 +86,9 @@ class AugmentationFactory:
             RandomCrop(patch_size)
         ])
 
-    # 需要加权的增强方法池
     @staticmethod
     def get_weak_weighted_augs():
+        # 共5个
         return [
             GaussianBlur(sigma_range=(0.5, 1.0)),
             ContrastAdjust(factor_range=(0.8, 1.2)),
@@ -113,6 +99,7 @@ class AugmentationFactory:
 
     @staticmethod
     def get_strong_weighted_augs():
+        # 共6个
         return [
             GaussianBlur(sigma_range=(1.0, 2.0)),
             GammaCorrection(gamma_range=(0.5, 2.5)),
@@ -122,9 +109,9 @@ class AugmentationFactory:
             ContrastAdjust(factor_range=(0.8, 1.2)),
         ]
 
-    # 新增：仅强度增强（供对比学习用，保证几何对齐）
     @staticmethod
     def get_intensity_only_augs():
+        # 共5个（仅强度增强，保证几何对齐）
         return [
             GaussianBlur(sigma_range=(0.8, 1.6)),
             GammaCorrection(gamma_range=(0.7, 1.6)),
@@ -138,61 +125,81 @@ class WeightedWeakAugment(nn.Module):
     def __init__(self, aug_list, controller=None, alpha=1.0):
         super().__init__()
         self.augmenters = aug_list
-        self.controller = controller  # 元控制器
-        self.alpha = alpha  # 融合强度参数 (建议设置为1.0~1.5)
-        self.default_weights = torch.tensor([0.15, 0.15, 0.2, 0.2, 0.3])
-    def get_aug_weights(self):
-        if self.controller is None:
-            weights = self.default_weights
-        else:
-            weights = self.controller.weights
-        weights_tensor = weights.clone().detach().float()
-        weights_cpu = weights_tensor.cpu().numpy()
-        return weights_cpu / np.sum(weights_cpu)
+        self.controller = controller
+        self.alpha = alpha
+        # 默认权重为5个元素；若与增强器数量不同，get_aug_weights 内部会统一处理
+        self.default_weights = torch.tensor([0.15, 0.15, 0.2, 0.2, 0.3], dtype=torch.float32)
 
-    def forward(self, sample,sample_pair=None):
+    def get_aug_weights(self):
+        n = len(self.augmenters)
+        # 没有控制器：用默认权重；若长度不匹配，回退为均匀分布
+        if self.controller is None:
+            w = self.default_weights.detach().cpu().numpy()
+            if w.size != n or np.sum(w) <= 0:
+                return np.ones(n, dtype=np.float32) / max(n, 1)
+            return (w / np.sum(w)).astype(np.float32)
+
+        # 有控制器：优先用 controller.get_probs()，否则直接用 weights
+        try:
+            if hasattr(self.controller, 'get_probs'):
+                w_t = self.controller.get_probs().detach().cpu()
+            else:
+                w_t = self.controller.weights.detach().cpu()
+            w = w_t.numpy().astype(np.float32)
+        except Exception:
+            w = np.ones(n, dtype=np.float32)
+
+        # 对齐长度：过长裁剪，过短填充，再归一化
+        if w.size != n:
+            if w.size > n:
+                w = w[:n]
+            else:
+                # 用均匀值填充，避免偏置
+                pad = np.ones(n - w.size, dtype=np.float32)
+                w = np.concatenate([w, pad], axis=0)
+        w = np.maximum(w, 1e-8)
+        w = w / np.sum(w)
+        return w
+
+    def forward(self, sample, sample_pair=None):
         original = sample.copy()
         weights = self.get_aug_weights()
         aug_idx = np.random.choice(len(self.augmenters), p=weights)
         augmenter = self.augmenters[aug_idx]
-        # 判断是否是CutMix/MixUp
+
         if isinstance(augmenter, (CutMix3D, MixUp3D)):
             if sample_pair is not None:
                 aug_sample = augmenter(original.copy(), sample_pair)
             else:
                 aug_sample = original
-            # 不再二次Beta混合
         else:
             aug_sample = augmenter(original.copy())
             mix_ratio = np.random.beta(0.3 + self.alpha, 0.3 + (1 - self.alpha))
             aug_sample['image'] = (1 - mix_ratio) * original['image'] + mix_ratio * aug_sample['image']
 
-        # 保留标签信息
         if 'label' in original:
             aug_sample['label'] = original['label']
 
         if self.controller is not None:
-            aug_sample['aug_idx'] = aug_idx  # 添加索引信息
-            return aug_sample
-        else:
-            return aug_sample
+            aug_sample['aug_idx'] = aug_idx
+        return aug_sample
 
 
 class DualTransformWrapper:
-    def __init__(self, labeled_aug, unlabeled_aug, controller=None,paired_sample=None):
+    def __init__(self, labeled_aug, unlabeled_aug, controller=None, paired_sample=None):
         self.labeled_aug = labeled_aug
         self.unlabeled_aug = unlabeled_aug
         self.controller = controller
 
-    def __call__(self, sample,paired_sample=None):
+    def __call__(self, sample, paired_sample=None):
         if sample.get('is_labeled', True):
             return self.labeled_aug(sample)
         else:
-            # 判断unlabeled_aug是否需要paired_sample
             if callable(self.unlabeled_aug) and 'sample_pair' in self.unlabeled_aug.__call__.__code__.co_varnames:
                 return self.unlabeled_aug(sample, sample_pair=paired_sample)
             else:
                 return self.unlabeled_aug(sample)
+
 
 def random_pair_indices(length):
     indices = np.arange(length)
@@ -202,6 +209,7 @@ def random_pair_indices(length):
         choices.remove(i)
         pair_indices.append(np.random.choice(choices))
     return pair_indices
+
 
 def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller=None):
     images = batch_data['image'].numpy()
@@ -220,7 +228,6 @@ def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller=N
             'label': np.ascontiguousarray(lbl),
             'is_labeled': is_lbl
         }
-        # 配对样本（仅为增强用）
         paired_sample = None
         if batch_size > 1:
             pair_idx = pair_indices[idx]
@@ -230,19 +237,19 @@ def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller=N
                 'label': np.ascontiguousarray(labels[pair_idx]),
                 'is_labeled': is_labeled[pair_idx]
             }
-        # 应用数据增强和转换为张量
         sample = transforms.Compose([
-            DualTransformWrapper(labeled_aug_in, unlabeled_aug_in,paired_sample),
+            DualTransformWrapper(labeled_aug_in, unlabeled_aug_in, paired_sample),
             ToTensor()
         ])(sample)
         sampled_batch.append(sample)
         if controller is not None and 'aug_idx' in sample:
             aug_indices.append(sample['aug_idx'])
-    controller.record_batch(aug_indices)
-    # 重组批次数据为字典
+    if controller is not None:
+        controller.record_batch(aug_indices)
+
     batch_dict = {
         'image': torch.stack([s['image'] for s in sampled_batch]),
         'label': torch.stack([s['label'] for s in sampled_batch]),
         'is_labeled': torch.tensor([s['is_labeled'] for s in sampled_batch], dtype=torch.bool)
     }
-    return batch_dict  # 返回字典类型
+    return batch_dict

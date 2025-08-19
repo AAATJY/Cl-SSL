@@ -1,6 +1,4 @@
-"""
-在train_cl4和train_origin_3进行了融合
-"""
+
 
 import argparse
 import logging

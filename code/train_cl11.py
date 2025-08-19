@@ -261,7 +261,6 @@ if __name__ == "__main__":
     for epoch_num in tqdm(range(max_epoch), ncols=70):
         time1 = time.time()
         for i_batch, sampled_batch in enumerate(trainloader):
-            # 检查是否启用对比学习
             if iter_num >= args.contrast_start_iter and not contrast_enabled:
                 logging.info(f"启用对比学习 at iteration {iter_num}")
                 contrast_enabled = True

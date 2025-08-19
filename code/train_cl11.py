@@ -22,7 +22,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_cl4 import VNet
+from networks.vnet_cl7 import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -173,6 +173,7 @@ if __name__ == "__main__":
         net.contrast_learner.patch_size = args.contrast_patch_size
         net.contrast_learner.temp = args.contrast_temp
         net.contrast_learner.hard_neg_k = args.contrast_hard_neg_k  # 新增
+        net.contrast_learner.voxel_conf_topk = 32  # 例如每patch取置信度top32体素
         model = net.cuda()
         # 梯度设置
         if ema:
@@ -255,15 +256,19 @@ if __name__ == "__main__":
     iter_num = 0
     max_epoch = max_iterations // len(trainloader) + 1
     lr_ = base_lr
-    # 对比学习启用标志
-    contrast_enabled = False
     # ================= 训练循环 =================
     for epoch_num in tqdm(range(max_epoch), ncols=70):
         time1 = time.time()
         for i_batch, sampled_batch in enumerate(trainloader):
-            if iter_num >= args.contrast_start_iter and not contrast_enabled:
-                logging.info(f"启用对比学习 at iteration {iter_num}")
-                contrast_enabled = True
+            # ====== 动态控制对比学习阶段 ======
+            enable_contrast = False
+            enable_patch_level = False
+            enable_voxel_level = False
+            if iter_num >= args.contrast_start_iter:
+                enable_contrast = True
+                enable_patch_level = True
+            if iter_num >= max_iterations*0.4:
+                enable_voxel_level = True
             # ================= 动态增强控制 =================
             aug_controller.step()
             current_strength = aug_controller.get_strength()  # 获取当前增强强度
@@ -332,24 +337,26 @@ if __name__ == "__main__":
             _, _, strong_spatial_feats = student_model(strong_volume_batch, return_encoder_feats=True)
 
             contrast_loss = 0
-            if contrast_enabled:
+            if enable_contrast:
                 for i in range(volume_batch.size(0)):
-                    anchor_feat = weak_decoder_feats[i].unsqueeze(0)  # [1, 256, 112, 112, 80]
+                    anchor_feat = weak_decoder_feats[i].unsqueeze(0)
                     positive_feat = strong_decoder_feats[i].unsqueeze(0)
-
-                    # 保证label_map和prob_map为5维 [B, 1, D, H, W]
+                    # label_map/prob_map见原实现
                     if i < labeled_bs:
-                        label_map = label_batch[i].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
+                        label_map = label_batch[i].unsqueeze(0).unsqueeze(1)
                         prob_map = None
                     else:
-                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
-                        prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)  # [1, 1, D, H, W]
+                        pseudo_label = torch.argmax(probs[i - labeled_bs], dim=0).unsqueeze(0).unsqueeze(1)
+                        prob_map = max_probs[i - labeled_bs].unsqueeze(0).unsqueeze(1)
                         label_map = pseudo_label
+                    # 关键：只传递enable_voxel_level
                     contrast_loss += student_model.contrast_learner(
                         anchor_feat,
                         positive_feat,
                         labels=label_map,
-                        prob_maps=prob_map
+                        prob_maps=prob_map,
+                        enable_patch_level=enable_patch_level,
+                        enable_voxel_level=enable_voxel_level
                     )
                 contrast_loss = contrast_loss / volume_batch.size(0)
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
@@ -427,12 +434,7 @@ if __name__ == "__main__":
             writer.add_scalar('train/consistency_loss', consistency_loss, iter_num)
             writer.add_scalar('train/consistency_weight', consistency_weight, iter_num)
             writer.add_scalar('train/consistency_dist', torch.mean(consistency_dist), iter_num)
-            # 记录对比学习损失
-            if contrast_enabled:
-                writer.add_scalar('loss/contrast_loss', contrast_loss, iter_num)
-                writer.add_scalar('loss/weighted_contrast_loss', weighted_contrast_loss, iter_num)
-            # logging.info('iteration %d : loss : %f cons_dist: %f, loss_weight: %f' %
-            #              (iter_num, student_loss.item(), consistency_dist.item(), consistency_weight))
+
             logging.info('iteration %d : loss : %f  loss_weight: %f' %
                          (iter_num, student_loss.item(),  consistency_weight))
 
@@ -448,7 +450,7 @@ if __name__ == "__main__":
                 adjust_learning_rate(student_optimizer, iter_num, max_iterations, base_lr)
                 adjust_learning_rate(teacher_optimizer, iter_num, max_iterations, base_lr * 0.1)
                 # 动态调整对比学习参数
-                if contrast_enabled:
+                if enable_contrast:
                     epoch_ratio = iter_num / max_iterations
                     new_threshold = 0.42 + 0.15 * epoch_ratio
                     student_model.contrast_learner.edge_threshold = new_threshold

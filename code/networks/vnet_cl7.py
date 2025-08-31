@@ -175,7 +175,6 @@ class RegionAwareContrastiveLearning(nn.Module):
                 if labels is not None:
                     labels = labels[topk_idx]
                 N_sel = voxel_conf_topk
-
         if labels is not None:
             pos_mask = labels.unsqueeze(0) == labels.unsqueeze(1)
             neg_mask = labels.unsqueeze(0) != labels.unsqueeze(1)
@@ -209,7 +208,6 @@ class RegionAwareContrastiveLearning(nn.Module):
         exp_neg = torch.exp(neg_sim).sum(dim=1) + exp_pos
         loss = -torch.log(exp_pos / (exp_neg + 1e-8))
         return loss.mean()
-# 其余Block结构保持不变...
 
 class ConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):

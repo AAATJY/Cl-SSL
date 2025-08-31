@@ -1,6 +1,3 @@
-"""
-在train_cl11的基础上对MPL进行了修改
-"""
 import argparse
 import logging
 import os
@@ -54,34 +51,33 @@ class MPLController:
         self.student_loss_history = []
         self.current_trend = 0.0  # 学生模型性能变化趋势
 
-    def compute_meta_grad(self, teacher_loss, teacher_params, student_params):
-        """计算元梯度"""
-        # 计算教师损失对教师参数的梯度
+    def compute_meta_grad(self, teacher_loss, student_params):
+        """计算元梯度（修正参数签名）"""
+        # 确保teacher_loss需要梯度
+        teacher_loss.requires_grad_(True)
+
+        # 计算教师参数的一阶梯度
         grad_teacher = torch.autograd.grad(
             teacher_loss,
-            teacher_params,
+            student_params,  # 这里应为教师模型的参数
             create_graph=True,
             allow_unused=True
         )
 
         meta_grads = []
-        for g_t, t_param in zip(grad_teacher, teacher_params):
+        for g_t, s_param in zip(grad_teacher, student_params):
             if g_t is None:
                 meta_grads.append(None)
                 continue
-
             # 计算二阶导数
             grad_student = torch.autograd.grad(
                 g_t.sum(),
-                student_params,
+                s_param,
                 retain_graph=True,
                 allow_unused=True
             )
-
-            # 应用元梯度缩放
             meta_grad = -self.grad_scale * (grad_student[0] if grad_student[0] is not None else 0.0)
             meta_grads.append(meta_grad)
-
         return meta_grads
 
     def get_teacher_weight(self):
@@ -91,7 +87,7 @@ class MPLController:
 parser = argparse.ArgumentParser()
 # parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',help='Dataset root path')
-parser.add_argument('--exp', type=str, default='train_cl12', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cl11', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=2, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=1, help='labeled_batch_size per gpu')
@@ -410,12 +406,11 @@ if __name__ == "__main__":
             # 计算并应用元梯度
             meta_grads = mpl_controller.compute_meta_grad(
                 teacher_loss=teacher_consistency_loss,  # 确保是标量损失
-                teacher_params=list(teacher_model.parameters()),
-                student_params=list(student_model.parameters())
+                student_params=list(student_model.parameters())  # 传递学生参数
             )
             for t_param, meta_g in zip(teacher_model.parameters(), meta_grads):
                 if meta_g is not None:
-                    t_param.grad = meta_g.to(t_param.device)
+                    t_param.grad += meta_g.to(t_param.device)
 
             torch.nn.utils.clip_grad_norm_(teacher_model.parameters(), args.grad_clip)  # 教师梯度裁剪
             teacher_optimizer.step()
@@ -425,6 +420,9 @@ if __name__ == "__main__":
             with torch.no_grad():
                 for t_param, s_param in zip(teacher_model.parameters(), student_model.parameters()):
                     t_param.data.mul_(alpha_teacher).add_(s_param.data, alpha=1 - alpha_teacher)
+
+            # 教师->学生EMA同步
+            update_ema_variables(teacher_model, student_model, alpha=0.999, global_step=iter_num)
 
             iter_num = iter_num + 1
             writer.add_scalar('uncertainty/mask_per', torch.sum(mask) / mask.numel(), iter_num)

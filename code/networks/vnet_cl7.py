@@ -135,79 +135,110 @@ class RegionAwareContrastiveLearning(nn.Module):
 
     def _rcps_voxel_level_contrast(self, anchor_patch, positive_patch, label_map=None, prob_map=None,
                                    voxel_sample_k=256, voxel_conf_topk=None):
+
+        device = anchor_patch.device
         C, D, H, W = anchor_patch.shape
         N = D * H * W
+
+        # [N, C]
         anchor_vox = anchor_patch.view(C, -1).t()
         positive_vox = positive_patch.view(C, -1).t()
 
+        # 1) 边缘区域筛选
         if prob_map is not None:
-            mask = (prob_map.view(-1) > self.edge_threshold)
+            pm = prob_map
+            if pm.dim() == 4 and pm.size(0) == 1:
+                pm = pm.squeeze(0)
+            conf_flat = pm.reshape(-1).to(device)
+            edge_mask = conf_flat > self.edge_threshold
         else:
-            mask = torch.ones(N, dtype=torch.bool, device=anchor_patch.device)
-        anchor_sel = anchor_vox[mask]
-        positive_sel = positive_vox[mask]
+            edge_mask = torch.ones(N, dtype=torch.bool, device=device)
+            conf_flat = None
+
+        sel_idx = torch.nonzero(edge_mask, as_tuple=False).squeeze(1)
+        if sel_idx.numel() == 0:
+            return torch.tensor(0.0, device=device)
+
+        # 2) 随机下采样（先随机后top-k，保持与原实现一致）
+        if sel_idx.numel() > voxel_sample_k:
+            perm = torch.randperm(sel_idx.numel(), device=device)[:voxel_sample_k]
+            sel_idx = sel_idx[perm]
+
+        # 3) 置信度 top-k 精筛（可选，保持原语义）
+        if (conf_flat is not None) and (voxel_conf_topk is not None) and (sel_idx.numel() > voxel_conf_topk):
+            conf_sel = conf_flat[sel_idx]
+            topk_idx = torch.topk(conf_sel, voxel_conf_topk).indices
+            sel_idx = sel_idx[topk_idx]
+
+        # 收集特征与标签
+        anchor_sel = anchor_vox[sel_idx]  # [N_sel, C]
+        positive_sel = positive_vox[sel_idx]  # [N_sel, C]
         N_sel = anchor_sel.size(0)
+
         if N_sel == 0:
-            return torch.tensor(0.0, device=anchor_patch.device)
+            return torch.tensor(0.0, device=device)
 
-        # ---- 随机采样 voxel ----
-        if N_sel > voxel_sample_k:
-            sample_idx = torch.randperm(N_sel, device=anchor_sel.device)[:voxel_sample_k]
-            anchor_sel = anchor_sel[sample_idx]
-            positive_sel = positive_sel[sample_idx]
-            if label_map is not None:
-                labels = label_map.view(-1)[mask][sample_idx]
-            else:
-                labels = None
+        if label_map is not None:
+            lm = label_map
+            if lm.dim() == 4 and lm.size(0) == 1:
+                lm = lm.squeeze(0)
+            labels = lm.reshape(-1)[sel_idx].to(device).long()
         else:
-            if label_map is not None:
-                labels = label_map.view(-1)[mask]
-            else:
-                labels = None
+            labels = None
 
-        # ---- 置信度topk采样 ----
-        if prob_map is not None and voxel_conf_topk is not None:
-            confs = prob_map.view(-1)[mask]
-            if len(confs) > voxel_conf_topk:
-                topk_idx = torch.topk(confs, voxel_conf_topk).indices
-                anchor_sel = anchor_sel[topk_idx]
-                positive_sel = positive_sel[topk_idx]
-                if labels is not None:
-                    labels = labels[topk_idx]
-                N_sel = voxel_conf_topk
+        # 4) 投影 + 归一化
+        z_a = F.normalize(self.projector(anchor_sel), dim=1)  # [N_sel, D']
+        z_p = F.normalize(self.projector(positive_sel), dim=1)  # [N_sel, D']
+
+        # 相似度矩阵
+        sim = torch.mm(z_a, z_p.t()) / self.temp  # [N_sel, N_sel]
+
+        # 5) 构造正负掩码
         if labels is not None:
-            pos_mask = labels.unsqueeze(0) == labels.unsqueeze(1)
-            neg_mask = labels.unsqueeze(0) != labels.unsqueeze(1)
+            pos_mask = labels.unsqueeze(0) == labels.unsqueeze(1)  # [N_sel, N_sel]
         else:
-            pos_mask = torch.eye(N_sel, dtype=torch.bool, device=anchor_sel.device)
-            neg_mask = ~pos_mask
+            pos_mask = torch.eye(N_sel, dtype=torch.bool, device=device)
 
-        anchor_proj = F.normalize(self.projector(anchor_sel), dim=1)
-        positive_proj = F.normalize(self.projector(positive_sel), dim=1)
-        sim_matrix = torch.mm(anchor_proj, positive_proj.t()) / self.temp
+        neg_mask = ~pos_mask
 
-        # 正样本均值
-        pos_sim = sim_matrix * pos_mask  # [N_sel, N_sel]
-        pos_count = pos_mask.sum(dim=1)  # [N_sel]
-        pos_sim_mean = pos_sim.sum(dim=1) / (pos_count + 1e-8)  # [N_sel]
+        # 若某一行没有负样本（极罕见），避免数值异常
+        has_neg = neg_mask.any(dim=1)
 
-        # hard negative mining
-        hard_negatives = []
+        # 6) 多正样本 InfoNCE（logsumexp 聚合正样本；hard negative 使用逐行 top-k）
+        # 用 -inf 做掩码，避免用 0 产生偏置
+        neg_logits = sim.masked_fill(~neg_mask, float('-inf'))  # [N_sel, N_sel]
+        pos_logits = sim.masked_fill(~pos_mask, float('-inf'))  # [N_sel, N_sel]
+
+        # 逐行 hard negative mining（保持与原实现 top-k 语义一致）
+        losses = []
         for i in range(N_sel):
-            neg_sim = sim_matrix[i][neg_mask[i]]
-            if neg_sim.numel() > self.hard_neg_k:
-                topk_neg_sim, _ = torch.topk(neg_sim, self.hard_neg_k)
-                hard_negatives.append(topk_neg_sim)
-            else:
-                hard_negatives.append(neg_sim)
-        hard_negatives = torch.stack([F.pad(hn, (0, self.hard_neg_k - hn.numel()), value=0) for hn in hard_negatives],
-                                    dim=0)  # [N_sel, hard_neg_k]
-        neg_sim = hard_negatives
+            pos_i = pos_logits[i]  # [N_sel]
+            # 正样本至少包含对角元素或同类
+            lse_pos = torch.logsumexp(pos_i, dim=0)  # 标量
 
-        exp_pos = torch.exp(pos_sim_mean)
-        exp_neg = torch.exp(neg_sim).sum(dim=1) + exp_pos
-        loss = -torch.log(exp_pos / (exp_neg + 1e-8))
-        return loss.mean()
+            neg_i = neg_logits[i]  # [N_sel], 非负位置为 -inf
+            if has_neg[i]:
+                # 过滤出有效负样本
+                valid_neg = neg_i[torch.isfinite(neg_i)]
+                if valid_neg.numel() > 0:
+                    if valid_neg.numel() > self.hard_neg_k:
+                        topk_vals = torch.topk(valid_neg, self.hard_neg_k).values
+                        lse_neg = torch.logsumexp(topk_vals, dim=0)
+                    else:
+                        lse_neg = torch.logsumexp(valid_neg, dim=0)
+                else:
+                    lse_neg = torch.tensor(float('-inf'), device=device)
+            else:
+                lse_neg = torch.tensor(float('-inf'), device=device)
+
+            # denom = log( sum_pos + sum_neg ) = logsumexp(lse_pos, lse_neg)
+            # 注意：lse_pos, lse_neg 是 log-sum 形式，对两者再做 logsumexp 即可
+            denom = torch.logsumexp(torch.stack([lse_pos, lse_neg]), dim=0)
+            loss_i = -(lse_pos - denom)
+            losses.append(loss_i)
+
+        loss = torch.stack(losses, dim=0).mean()
+        return loss
 
 class ConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):

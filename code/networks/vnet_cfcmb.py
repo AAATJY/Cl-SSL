@@ -166,25 +166,21 @@ class VNet(nn.Module):
     def encoder(self, input):
         x1 = self.block_one(input)
         x1_dw = self.block_one_dw(x1)
-
         if self.mc_dropout:
             x1 = self.mc_dropout_layers[0](x1)
 
         x2 = self.block_two(x1_dw)
         x2_dw = self.block_two_dw(x2)
-
         if self.mc_dropout:
             x2 = self.mc_dropout_layers[1](x2)
 
         x3 = self.block_three(x2_dw)
         x3_dw = self.block_three_dw(x3)
-
         if self.mc_dropout:
             x3 = self.mc_dropout_layers[2](x3)
 
         x4 = self.block_four(x3_dw)
         x4_dw = self.block_four_dw(x4)
-
         if self.mc_dropout:
             x4 = self.mc_dropout_layers[3](x4)
 
@@ -193,7 +189,6 @@ class VNet(nn.Module):
             x5 = self.dropout(x5)
 
         res = [x1, x2, x3, x4, x5]
-
         return res
 
     def decoder(self, features):

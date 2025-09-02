@@ -147,7 +147,6 @@ if __name__ == "__main__":
     labeled_aug_out = transforms.Compose([
         AugmentationFactory.weak_base_aug(patch_size),
     ])
-    # unlabeled 也使用弱增强（不使用强增强）
     unlabeled_aug_in = transforms.Compose([
         WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs(), controller=meta_controller)
     ])

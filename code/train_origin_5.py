@@ -158,7 +158,7 @@ if __name__ == "__main__":
         )
     ])
     unlabeled_aug_out = transforms.Compose([
-        AugmentationFactory.strong_base_aug(patch_size),
+        AugmentationFactory.weak_base_aug(patch_size),
     ])
 
     labeled_idxs = list(range(16))

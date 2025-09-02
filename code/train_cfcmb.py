@@ -240,7 +240,7 @@ if __name__ == "__main__":
             # 取均值（保留和原一致性形式）
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
 
-            labeled_centers = cfcmb.compute_region_centers_3d(student_features[:labeled_bs], label_batch[:labeled_bs],num_classes=2)
+            labeled_centers = cfcmb.compute_region_centers_3d(student_features[:labeled_bs], label_batch[:labeled_bs],2)
             # 更新 CFCMB（仅在有标注处更新）
             cfcmb.update_from_centers(labeled_centers)
 
@@ -249,7 +249,7 @@ if __name__ == "__main__":
             # ========== 无标注部分的区域中心（基于伪标签，不更新 CFCMB） ==========
             unlabeled_features = student_features[labeled_bs:]  # [U_bs, C_feat, D, H, W]
             unlabeled_pseudo = pseudo_labels  # [U_bs, D, H, W]
-            unlabeled_centers = cfcmb.compute_region_centers_3d(unlabeled_features, unlabeled_pseudo, num_classes=2)
+            unlabeled_centers = cfcmb.compute_region_centers_3d(unlabeled_features, unlabeled_pseudo, 2)
             Lcon_unsup = cfcmb.contrastive_loss_for_centers(unlabeled_centers)
 
             # ========== 总损失组合 ==========

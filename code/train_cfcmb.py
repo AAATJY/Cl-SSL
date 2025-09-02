@@ -240,7 +240,7 @@ if __name__ == "__main__":
             # 取均值（保留和原一致性形式）
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
 
-            labeled_centers = cfcmb.compute_region_centers_3d(student_features[:labeled_bs], label_batch[:labeled_bs],2)
+            labeled_centers = cfcmb.compute_region_centers_3d(student_features[:labeled_bs], label_batch[:labeled_bs], 2)
             # 更新 CFCMB（仅在有标注处更新）
             cfcmb.update_from_centers(labeled_centers)
 

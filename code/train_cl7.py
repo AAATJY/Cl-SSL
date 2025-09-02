@@ -25,6 +25,7 @@ from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
 from networks.vnet_cl4 import VNet
+from networks.cfcmb import ClassFeatureMemoryBank, sample_features_per_class
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss  # 需在文件头部导入
 
@@ -115,7 +116,32 @@ parser.add_argument('--contrast_patch_size', type=int, default=16, help='对比�
 parser.add_argument('--contrast_temp', type=float, default=0.1, help='对比学习温度参数')
 # 🆕 新增RCPS相关参数
 parser.add_argument('--contrast_hard_neg_k', type=int, default=32, help='对比学习hard negative数量')
+
+# 🆕 新增CFCMB相关参数
+parser.add_argument('--enable_cfcmb', action='store_true', default=True, help='启用Class-Feature Contrastive Memory Bank')
+parser.add_argument('--disable_cfcmb', action='store_true', help='禁用Class-Feature Contrastive Memory Bank')
+parser.add_argument('--proto_weight', type=float, default=0.15, help='原型对比学习权重')
+parser.add_argument('--proto_temp', type=float, default=0.15, help='原型对比学习温度')
+parser.add_argument('--proto_conf_thresh', type=float, default=0.9, help='原型更新置信度阈值')
+parser.add_argument('--proto_queue_size', type=int, default=512, help='原型队列大小')
+parser.add_argument('--proto_feat_dim', type=int, default=128, help='原型特征维度')
+parser.add_argument('--proto_warmup_start', type=int, default=None, help='原型预热开始迭代(默认与contrast_start_iter相同)')
+parser.add_argument('--proto_warmup_stop', type=int, default=None, help='原型预热结束迭代(默认为warmup_start + 2000)')
+parser.add_argument('--proto_samples_per_class', type=int, default=256, help='每类每图像采样上限')
+parser.add_argument('--proto_momentum_labeled', type=float, default=0.9, help='标注样本原型动量')
+parser.add_argument('--proto_momentum_unlabeled', type=float, default=0.98, help='无标注样本原型动量')
+
 args = parser.parse_args()
+
+# 设置默认的原型预热参数
+if args.proto_warmup_start is None:
+    args.proto_warmup_start = args.contrast_start_iter
+if args.proto_warmup_stop is None:
+    args.proto_warmup_stop = args.proto_warmup_start + 2000
+
+# 处理CFCMB启用标志
+if args.disable_cfcmb:
+    args.enable_cfcmb = False
 
 train_data_path = args.root_path
 snapshot_path = "../model/" + args.exp + "/"
@@ -195,6 +221,30 @@ if __name__ == "__main__":
     teacher_model.contrast_learner.patch_size = args.contrast_patch_size
     teacher_model.contrast_learner.temp = args.contrast_temp
     # 设置对比学习模块参数
+    
+    # 🆕 初始化CFCMB Memory Bank
+    cfcmb_bank = None
+    if args.enable_cfcmb:
+        cfcmb_bank = ClassFeatureMemoryBank(
+            num_classes=num_classes,
+            feat_dim=args.proto_feat_dim,
+            queue_size=args.proto_queue_size,
+            momentum_labeled=args.proto_momentum_labeled,
+            momentum_unlabeled=args.proto_momentum_unlabeled,
+            temperature=args.proto_temp
+        ).cuda()
+        logging.info(f"初始化CFCMB Memory Bank: num_classes={num_classes}, feat_dim={args.proto_feat_dim}")
+
+    # 🆕 可选：从检查点恢复训练 (示例代码，可根据需要启用)
+    # resume_checkpoint = None  # 设置检查点路径
+    # if resume_checkpoint and os.path.exists(resume_checkpoint):
+    #     logging.info(f"Loading checkpoint from {resume_checkpoint}")
+    #     checkpoint = torch.load(resume_checkpoint)
+    #     student_model.load_state_dict(checkpoint['student'])
+    #     teacher_model.load_state_dict(checkpoint['teacher'])
+    #     if 'cfcmb_bank' in checkpoint and cfcmb_bank is not None:
+    #         cfcmb_bank.load_state_dict(checkpoint['cfcmb_bank'])
+    #         logging.info("CFCMB bank state loaded from checkpoint")
 
     teacher_optimizer = optim.SGD(teacher_model.parameters(), lr=base_lr * 0.1, momentum=0.9, weight_decay=0.0001)
     student_optimizer = optim.SGD(student_model.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
@@ -267,6 +317,10 @@ if __name__ == "__main__":
             if iter_num >= args.contrast_start_iter and not contrast_enabled:
                 logging.info(f"启用对比学习 at iteration {iter_num}")
                 contrast_enabled = True
+            
+            # 🆕 检查CFCMB阶段
+            cfcmb_warmup_phase = args.enable_cfcmb and iter_num < args.proto_warmup_start
+            cfcmb_active_phase = args.enable_cfcmb and iter_num >= args.proto_warmup_start
             # ================= 动态增强控制 =================
             aug_controller.step()
             current_strength = aug_controller.get_strength()  # 获取当前增强强度
@@ -311,6 +365,11 @@ if __name__ == "__main__":
             with torch.no_grad():
                 _, _, strong_decoder_feats = student_model(strong_volume_batch, return_decoder_feats=True)
                 strong_decoder_feats = strong_decoder_feats.detach()
+            
+            # 🆕 获取解码器特征用于CFCMB (如果启用)
+            dec_features_for_proto = None
+            if args.enable_cfcmb:
+                _, _, dec_features_for_proto = student_model(volume_batch, return_decoder_feats=True)
 
             # 监督损失（带标签平滑）
             focal_criterion = FocalLoss(alpha=0.8, gamma=2)# 新增损失函数
@@ -330,13 +389,16 @@ if __name__ == "__main__":
             weighted_loss = consistency_dist * mask  # 逐样本加权
             masked_consistency = weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1)
             consistency_loss = consistency_weight * torch.mean(weighted_loss)
-            # ================= 新增：对比学习损失 =================
+            # ================= 对比学习损失 (修改为仅标注样本) =================
             _, _, weak_spatial_feats = student_model(weak_volume_batch, return_encoder_feats=True)
             _, _, strong_spatial_feats = student_model(strong_volume_batch, return_encoder_feats=True)
 
             contrast_loss = 0
             if contrast_enabled:
-                for i in range(volume_batch.size(0)):
+                # 🆕 在warmup阶段，仅对标注样本进行RA-CL
+                contrast_range = labeled_bs if cfcmb_warmup_phase else volume_batch.size(0)
+                
+                for i in range(contrast_range):
                     anchor_feat = weak_decoder_feats[i].unsqueeze(0)  # [1, 256, 112, 112, 80]
                     positive_feat = strong_decoder_feats[i].unsqueeze(0)
 
@@ -354,15 +416,79 @@ if __name__ == "__main__":
                         labels=label_map,
                         prob_maps=prob_map
                     )
-                contrast_loss = contrast_loss / volume_batch.size(0)
+                contrast_loss = contrast_loss / contrast_range
                 contrast_weight = args.contrast_weight * min(1.0, (iter_num - args.contrast_start_iter) / 2000)
                 weighted_contrast_loss = contrast_weight * contrast_loss
             else:
                 weighted_contrast_loss = 0
 
+            # 🆕 CFCMB 原型对比学习损失
+            proto_loss = 0
+            weighted_proto_loss = 0
+            num_sampled_unlabeled = 0
+            
+            if args.enable_cfcmb and cfcmb_bank is not None and dec_features_for_proto is not None:
+                # A) 标注样本更新Memory Bank (在warmup和active阶段都进行)
+                if labeled_bs > 0:
+                    labeled_features = dec_features_for_proto[:labeled_bs]
+                    labeled_labels = label_batch[:labeled_bs]
+                    
+                    # 采样标注样本特征
+                    sampled_labeled_feats, sampled_labeled_labels = sample_features_per_class(
+                        labeled_features, labeled_labels, args.proto_samples_per_class
+                    )
+                    
+                    if sampled_labeled_feats.size(0) > 0:
+                        # 更新Memory Bank
+                        cfcmb_bank.update_with_labeled(
+                            sampled_labeled_feats.detach(), 
+                            sampled_labeled_labels.detach(),
+                            max_samples_per_class=args.proto_samples_per_class
+                        )
+                
+                # B) 无标注样本的原型对比损失 (仅在active阶段)
+                if cfcmb_active_phase and volume_batch.size(0) > labeled_bs:
+                    unlabeled_features = dec_features_for_proto[labeled_bs:]
+                    
+                    # 使用教师的伪标签和置信度
+                    pseudo_labels_argmax = torch.argmax(probs, dim=1)  # [B-labeled_bs, D, H, W]
+                    pseudo_confidences = max_probs  # [B-labeled_bs, D, H, W]
+                    
+                    # 采样高置信度的无标注样本特征
+                    sampled_unlabeled_feats, sampled_unlabeled_labels = sample_features_per_class(
+                        unlabeled_features, pseudo_labels_argmax, args.proto_samples_per_class
+                    )
+                    
+                    if sampled_unlabeled_feats.size(0) > 0:
+                        num_sampled_unlabeled = sampled_unlabeled_feats.size(0)
+                        
+                        # 获取对应的置信度
+                        # 这里简化处理，使用平均置信度权重
+                        mean_conf = pseudo_confidences.mean()
+                        
+                        # 计算原型对比损失
+                        proto_loss = cfcmb_bank.proto_contrastive_loss(
+                            sampled_unlabeled_feats,
+                            sampled_unlabeled_labels,
+                            temperature=args.proto_temp,
+                            conf_weights=None  # 可以后续添加更细粒度的置信度权重
+                        )
+                        
+                        # 可选：使用高置信度样本更新Memory Bank
+                        # 为了保守起见，这里不更新，仅计算损失
+                        # cfcmb_bank.update_with_unlabeled(...)
+                
+                # 计算权重化的原型损失 (线性warmup)
+                if cfcmb_active_phase and proto_loss > 0:
+                    # 线性warmup from 0 to args.proto_weight
+                    warmup_progress = min(1.0, (iter_num - args.proto_warmup_start) / 
+                                        (args.proto_warmup_stop - args.proto_warmup_start))
+                    proto_weight = args.proto_weight * warmup_progress
+                    weighted_proto_loss = proto_weight * proto_loss
+
 
             # 学生反向传播（带梯度裁剪）
-            student_loss = supervised_loss + consistency_loss + weighted_contrast_loss
+            student_loss = supervised_loss + consistency_loss + weighted_contrast_loss + weighted_proto_loss
             student_optimizer.zero_grad()
             # 保留计算图供元学习
             with torch.enable_grad():
@@ -434,6 +560,18 @@ if __name__ == "__main__":
             if contrast_enabled:
                 writer.add_scalar('loss/contrast_loss', contrast_loss, iter_num)
                 writer.add_scalar('loss/weighted_contrast_loss', weighted_contrast_loss, iter_num)
+            
+            # 🆕 记录CFCMB相关损失和指标
+            if args.enable_cfcmb and cfcmb_bank is not None:
+                writer.add_scalar('loss/proto_loss', proto_loss, iter_num)
+                writer.add_scalar('loss/weighted_proto_loss', weighted_proto_loss, iter_num)
+                writer.add_scalar('bank/num_sampled_unlabeled', num_sampled_unlabeled, iter_num)
+                
+                # 记录原型范数（每个类的原型向量的L2范数）
+                proto_norms = cfcmb_bank.get_prototype_norms()
+                for class_id in range(num_classes):
+                    writer.add_scalar(f'bank/proto_norm_class_{class_id}', proto_norms[class_id], iter_num)
+                writer.add_scalar('bank/proto_norm_mean', proto_norms.mean(), iter_num)
             # logging.info('iteration %d : loss : %f cons_dist: %f, loss_weight: %f' %
             #              (iter_num, student_loss.item(), consistency_dist.item(), consistency_weight))
             logging.info('iteration %d : loss : %f  loss_weight: %f' %
@@ -462,12 +600,17 @@ if __name__ == "__main__":
                         f"调整对比学习参数: edge_threshold={new_threshold:.3f}, weights={student_model.contrast_learner.loss_weights}")
 
             if iter_num % 1000 == 0:
-                torch.save({
+                checkpoint_dict = {
                     'student': student_model.state_dict(),
                     'teacher': teacher_model.state_dict(),
                     'contrast_learner': student_model.contrast_learner.state_dict(),  # 保存对比学习模块
                     'iter_num': iter_num
-                }, os.path.join(snapshot_path, f'iter_{iter_num}.pth'))
+                }
+                # 🆕 保存CFCMB状态
+                if args.enable_cfcmb and cfcmb_bank is not None:
+                    checkpoint_dict['cfcmb_bank'] = cfcmb_bank.state_dict()
+                
+                torch.save(checkpoint_dict, os.path.join(snapshot_path, f'iter_{iter_num}.pth'))
 
             if iter_num >= max_iterations:
                 break
@@ -476,9 +619,14 @@ if __name__ == "__main__":
             break
 
     # 最终保存（保存所有模型）
-    torch.save({
+    final_checkpoint = {
         'student': student_model.state_dict(),
         'teacher': teacher_model.state_dict(),
         'contrast_learner': student_model.contrast_learner.state_dict(),
-    }, os.path.join(snapshot_path, f'iter_{max_iterations}.pth'))
+    }
+    # 🆕 保存CFCMB状态
+    if args.enable_cfcmb and cfcmb_bank is not None:
+        final_checkpoint['cfcmb_bank'] = cfcmb_bank.state_dict()
+    
+    torch.save(final_checkpoint, os.path.join(snapshot_path, f'iter_{max_iterations}.pth'))
     writer.close()

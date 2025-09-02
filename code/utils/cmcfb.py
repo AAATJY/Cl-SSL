@@ -87,12 +87,8 @@ class RegionContrastiveMemoryBinary:
             return torch.tensor(0.0, device=device)
         return total_loss / count
 
+    @staticmethod
     def compute_region_centers_3d(features, labels, num_classes=2):
-        """
-        features: [B, C, D, H, W]
-        labels: [B, D, H, W]
-        return: dict {class_id: tensor [B, C] or None}
-        """
         B, Cf, D, H, W = features.shape
         centers = {}
         for c in range(num_classes):

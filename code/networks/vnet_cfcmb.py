@@ -192,12 +192,7 @@ class VNet(nn.Module):
         return res
 
     def decoder(self, features):
-        x1 = features[0]
-        x2 = features[1]
-        x3 = features[2]
-        x4 = features[3]
-        x5 = features[4]
-
+        x1, x2, x3, x4, x5 = features
         x5_up = self.block_five_up(x5)
         x5_up = x5_up + x4
 
@@ -213,11 +208,11 @@ class VNet(nn.Module):
         x8_up = self.block_eight_up(x8)
         x8_up = x8_up + x1
         x9 = self.block_nine(x8_up)
-        # x9 = F.dropout3d(x9, p=0.5, training=True)
+
         if self.has_dropout:
             x9 = self.dropout(x9)
         out = self.out_conv(x9)
-        return out
+        return out, x9
 
     def forward(self, input, turnoff_drop=False, enable_dropout=True):
         if turnoff_drop:

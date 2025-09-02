@@ -123,7 +123,8 @@ class Upsampling(nn.Module):
 
 
 class VNet(nn.Module):
-    def __init__(self, n_channels=3, n_classes=2, n_filters=16, normalization='none', has_dropout=False,mc_dropout=False, mc_dropout_rate=0.2):
+    def __init__(self, n_channels=3, n_classes=2, n_filters=16, normalization='none',
+                 has_dropout=False, mc_dropout=False, mc_dropout_rate=0.2):
         super(VNet, self).__init__()
         self.has_dropout = has_dropout
         self.mc_dropout = mc_dropout
@@ -157,9 +158,9 @@ class VNet(nn.Module):
 
         if has_dropout:
             self.dropout = nn.Dropout3d(p=0.5, inplace=False)
-        if mc_dropout:  # 教师模型专用dropout
+        if mc_dropout:
             self.mc_dropout_layers = nn.ModuleList([
-                nn.Dropout3d(p=mc_dropout_rate) for _ in range(4)  # 在4个关键位置添加
+                nn.Dropout3d(p=mc_dropout_rate) for _ in range(4)
             ])
 
     def encoder(self, input):

@@ -26,7 +26,7 @@ from tqdm import tqdm
 from dataloaders.la_version1_3 import (
     LAHeart, ToTensor, TwoStreamBatchSampler
 )
-from networks.vnet_version1 import VNet
+from networks.vnet_cfcmb import VNet
 from utils import ramps, losses
 from utils.lossesplus import BoundaryLoss, FocalLoss
 from utils.cmcfb import RegionContrastiveMemoryBinary
@@ -49,10 +49,10 @@ class AugmentationController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_origin_5', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cfcmb', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
-parser.add_argument('--batch_size', type=int, default=8, help='batch_size per gpu')
-parser.add_argument('--labeled_bs', type=int, default=4, help='labeled_batch_size per gpu')
+parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
+parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
 parser.add_argument('--base_lr', type=float, default=0.01, help='maximum epoch number to train')
 parser.add_argument('--deterministic', type=int, default=1, help='whether use deterministic training')
 parser.add_argument('--seed', type=int, default=1337, help='random seed')
@@ -68,6 +68,9 @@ parser.add_argument('--mc_dropout_rate', type=float, default=0.2, help='MC Dropo
 parser.add_argument('--meta_grad_scale', type=float, default=0.1, help='元梯度缩放系数')
 parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪阈值')
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
+parser.add_argument('--queue_size', type=int, default=200, help='CFCMB 每类队列长度')
+parser.add_argument('--beta_con', type=float, default=0.1, help='有标注对比损失权重')
+parser.add_argument('--lambda_con', type=float, default=0.5, help='无标注对比损失权重')
 args = parser.parse_args()
 
 train_data_path = args.root_path
@@ -138,7 +141,7 @@ if __name__ == "__main__":
     # 控制器与增强器
     meta_controller = MetaAugController(num_aug=6, init_temp=0.6,
                                         init_weights=[0.166]*6).cuda()
-    aug_controller = MetaAugController  # we will use earlier AugmentationController for strength if needed
+    aug_controller = AugmentationController(args.max_iterations)
 
     # 仅弱增强：只取弱增强的流水线
     labeled_aug_in = transforms.Compose([

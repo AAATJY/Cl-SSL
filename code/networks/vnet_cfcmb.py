@@ -44,7 +44,7 @@ class ResidualConvBlock(nn.Module):
                 ops.append(nn.InstanceNorm3d(n_filters_out))
             elif normalization != 'none':
                 assert False
-            if i != n_stages-1:
+            if i != n_stages - 1:
                 ops.append(nn.ReLU(inplace=True))
         self.conv = nn.Sequential(*ops)
         self.relu = nn.ReLU(inplace=True)

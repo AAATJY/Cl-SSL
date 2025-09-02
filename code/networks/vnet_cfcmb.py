@@ -214,16 +214,18 @@ class VNet(nn.Module):
         out = self.out_conv(x9)
         return out, x9
 
-    def forward(self, input, turnoff_drop=False, enable_dropout=True):
+    def forward(self, input, turnoff_drop=False, enable_dropout=True, return_features=False):
         if turnoff_drop:
             has_dropout = self.has_dropout
             self.has_dropout = False
-
-        # MC Dropout特殊处理
         if self.mc_dropout and enable_dropout:
-            self.train()  # 强制保持训练模式
+            self.train()
         features = self.encoder(input)
-        out = self.decoder(features)
+        out, feat = self.decoder(features)
         if turnoff_drop:
             self.has_dropout = has_dropout
-        return out
+        if return_features:
+            # 返回 logits 和 最后一层特征 (用于区域中心计算)
+            return out, feat
+        else:
+            return out

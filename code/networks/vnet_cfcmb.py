@@ -58,7 +58,6 @@ class ResidualConvBlock(nn.Module):
 class DownsamplingConvBlock(nn.Module):
     def __init__(self, n_filters_in, n_filters_out, stride=2, normalization='none'):
         super(DownsamplingConvBlock, self).__init__()
-
         ops = []
         if normalization != 'none':
             ops.append(nn.Conv3d(n_filters_in, n_filters_out, stride, padding=0, stride=stride))
@@ -72,14 +71,11 @@ class DownsamplingConvBlock(nn.Module):
                 assert False
         else:
             ops.append(nn.Conv3d(n_filters_in, n_filters_out, stride, padding=0, stride=stride))
-
         ops.append(nn.ReLU(inplace=True))
-
         self.conv = nn.Sequential(*ops)
 
     def forward(self, x):
-        x = self.conv(x)
-        return x
+        return self.conv(x)
 
 
 class UpsamplingDeconvBlock(nn.Module):

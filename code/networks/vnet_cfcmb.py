@@ -4,14 +4,12 @@ from torch import nn
 class ConvBlock(nn.Module):
     def __init__(self, n_stages, n_filters_in, n_filters_out, normalization='none'):
         super(ConvBlock, self).__init__()
-
         ops = []
         for i in range(n_stages):
-            if i==0:
+            if i == 0:
                 input_channel = n_filters_in
             else:
                 input_channel = n_filters_out
-
             ops.append(nn.Conv3d(input_channel, n_filters_out, 3, padding=1))
             if normalization == 'batchnorm':
                 ops.append(nn.BatchNorm3d(n_filters_out))
@@ -22,12 +20,10 @@ class ConvBlock(nn.Module):
             elif normalization != 'none':
                 assert False
             ops.append(nn.ReLU(inplace=True))
-
         self.conv = nn.Sequential(*ops)
 
     def forward(self, x):
-        x = self.conv(x)
-        return x
+        return self.conv(x)
 
 
 class ResidualConvBlock(nn.Module):

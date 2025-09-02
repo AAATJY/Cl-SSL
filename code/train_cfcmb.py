@@ -140,10 +140,9 @@ if __name__ == "__main__":
 
     # 控制器与增强器
     meta_controller = MetaAugController(num_aug=6, init_temp=0.6,
-                                        init_weights=[0.166]*6).cuda()
+                                        init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
 
-    # 仅弱增强：只取弱增强的流水线
     labeled_aug_in = transforms.Compose([
         WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs())
     ])
@@ -151,7 +150,10 @@ if __name__ == "__main__":
         AugmentationFactory.weak_base_aug(patch_size),
     ])
     unlabeled_aug_in = transforms.Compose([
-        WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs(), controller=meta_controller)
+        WeightedWeakAugment(
+            AugmentationFactory.get_strong_weighted_augs(),
+            controller=meta_controller
+        )
     ])
     unlabeled_aug_out = transforms.Compose([
         AugmentationFactory.weak_base_aug(patch_size),

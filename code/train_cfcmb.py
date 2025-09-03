@@ -49,7 +49,7 @@ class AugmentationController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cfcmb', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cfcmb_2', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -70,7 +70,7 @@ parser.add_argument('--grad_clip', type=float, default=3.0, help='梯度裁剪�
 parser.add_argument('--teacher_alpha', type=float, default=0.99, help='教师模型EMA系数')
 parser.add_argument('--queue_size', type=int, default=200, help='CFCMB 每类队列长度')
 parser.add_argument('--beta_con', type=float, default=0.1, help='有标注对比损失权重')
-parser.add_argument('--lambda_con', type=float, default=0.5, help='无标注对比损失权重')
+parser.add_argument('--lambda_con', type=float, default=0.4, help='无标注对比损失权重')
 args = parser.parse_args()
 
 train_data_path = args.root_path

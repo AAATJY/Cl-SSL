@@ -32,7 +32,7 @@ class MetaAugController(nn.Module):
     def record_batch(self, aug_indices):
         """记录批次增强选择"""
         self.history.append({
-            'indices': aug_indices,  # 形状为[batch_size]的Tensor
+            'indices': aug_indices,
         })
 
     def update_weights(self, sample_loss):
@@ -76,8 +76,6 @@ class MetaAugController(nn.Module):
             # **归一化权重**
         with torch.no_grad():
             self.weights.data = self.weights.data / self.weights.data.sum()  # 线性归一化
-            # 或者使用 softmax
-            # self.weights.data = torch.softmax(self.weights.data / self.temperature, dim=0)
         # 清空历史记录
         self.history = []
 

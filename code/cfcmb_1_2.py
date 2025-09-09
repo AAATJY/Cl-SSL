@@ -156,7 +156,7 @@ if __name__ == "__main__":
         )
     ])
     unlabeled_aug_out = transforms.Compose([
-        AugmentationFactory.weak_base_aug(patch_size),
+        AugmentationFactory.strong_base_aug(patch_size),
     ])
 
     # dataloader

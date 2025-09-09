@@ -5,7 +5,7 @@
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -158,7 +158,7 @@ if __name__ == "__main__":
         )
     ])
     unlabeled_aug_out = transforms.Compose([
-        AugmentationFactory.weak_base_aug(patch_size),
+        AugmentationFactory.strong_base_aug(patch_size),
     ])
 
     labeled_idxs = list(range(16))

@@ -1,11 +1,11 @@
 """
-把循环中的3D旋转增强和噪声扰动增强取消
+把循环中的3D旋转增强和噪声扰动增强取消,同时去掉强增强
 """
 
 import argparse
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment,batch_aug_wrapper
@@ -90,8 +90,8 @@ class MPLController:
         return torch.sigmoid(torch.tensor(self.current_trend))  # 趋势越好，权重越大
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_origin_4', help='model_name')
+parser.add_argument('--root_path', type=str, default='/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+parser.add_argument('--exp', type=str, default='train_origin_5', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=15000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -185,7 +185,7 @@ if __name__ == "__main__":
 
     # ================= MPL控制器、元控制器和增强控制器初始化 =================
     mpl_controller = MPLController(T=10, alpha=0.95)  # 初始化MPL控制器
-    meta_controller = MetaAugController(num_aug=6,init_temp=0.6,init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
+    meta_controller = MetaAugController(num_aug=6,init_temp=0.6,init_weights=[0.166, 0.166, 0.166, 0.166, 0.166,0.166]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
     # ================= 增强策略及数据加载 =================
     labeled_aug_in = transforms.Compose([
@@ -247,15 +247,16 @@ if __name__ == "__main__":
             current_strength = aug_controller.get_strength()  # 获取当前增强强度
             time2 = time.time()
             # ================= 数据准备 =================
+            weak_volume = sampled_batch['image'].cuda()
+            weak_volume_batch = weak_volume[labeled_bs:]
             sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in,meta_controller)
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
-            unlabeled_volume_batch = volume_batch[labeled_bs:]
             # ========== 阶段1：教师模型生成伪标签 ==========
             with torch.no_grad():
                 # 🛠️ 去掉噪声扰动增强和3D旋转增强，只做一遍弱增强
                 # 直接用弱增强后的输入获得教师输出
-                teacher_outputs = teacher_model(unlabeled_volume_batch)
+                teacher_outputs = teacher_model(weak_volume_batch)
                 teacher_outputs = teacher_outputs / args.temperature  # 温度缩放
 
                 # 动态置信度阈值

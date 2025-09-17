@@ -51,7 +51,7 @@ class AugmentationController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cfcmb_ms', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cfcmb_2_3', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=18000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -269,19 +269,19 @@ if __name__ == "__main__":
 
             # 监督损失（有标注）
             focal_criterion = FocalLoss(alpha=0.8, gamma=2)
-            loss_seg = F.cross_entropy(student_outputs[:labeled_bs], label_batch[:labeled_bs], label_smoothing=0.1)
+            loss_seg = F.cross_entropy(student_outputs[:labeled_bs], label_batch[:labeled_bs], label_smoothing=0.05)
             outputs_soft = F.softmax(student_outputs, dim=1)
             loss_seg_dice = losses.dice_loss(outputs_soft[:labeled_bs, 1, :, :, :],
                                              (label_batch[:labeled_bs] == 1).float())
             loss_boundary = BoundaryLoss()(outputs_soft[:labeled_bs, 1], (label_batch[:labeled_bs] == 1).float())
             loss_focal = focal_criterion(student_outputs[:labeled_bs], label_batch[:labeled_bs])
-            supervised_loss = 0.3 * (loss_seg + loss_seg_dice) + 0.4 * loss_boundary + 0.3 * loss_focal
+            supervised_loss = 0.3 * (loss_seg + loss_seg_dice) + 0.2 * loss_boundary + 0.3 * loss_focal
 
             # 一致性损失（无标注，带动态 mask）
             consistency_weight = get_current_consistency_weight(iter_num // 150)
             consistency_dist = consistency_criterion(
                 student_outputs[labeled_bs:],
-                label_smoothing(probs, factor=0.1)
+                label_smoothing(probs, factor=0.05)
             )
             weighted_loss = consistency_dist * mask
             consistency_loss = consistency_weight * torch.mean(weighted_loss)

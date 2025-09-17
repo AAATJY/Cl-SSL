@@ -201,7 +201,7 @@ if __name__ == "__main__":
     logging.info("{} itertations per epoch".format(len(trainloader)))
 
     # [AMR-CMB] MOD: 惰性初始化 AMR-CMB（首个 batch 前向后根据实际通道构造）
-    amr = None  # type: Optional[AdaptiveMultiScaleRegionContrastiveMemory]
+    amr = None  # type:Optional[AdaptiveMultiScaleRegionContrastiveMemory]
 
     iter_num = 0
     max_epoch = max_iterations // len(trainloader) + 1

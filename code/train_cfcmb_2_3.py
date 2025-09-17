@@ -1,6 +1,5 @@
 """
-并加入基于自适应多尺度区域对比学习的 AMR-CMB（二分类版本）
-基于 train_cfcmb.py 改造
+有监督损失：Boundary 权重降到 0.2，CE smoothing 降到 0.05。
 """
 
 import argparse

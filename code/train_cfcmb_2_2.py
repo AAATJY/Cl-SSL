@@ -1,6 +1,5 @@
 """
-并加入基于自适应多尺度区域对比学习的 AMR-CMB（二分类版本）
-基于 train_cfcmb.py 改造
+MetaAugController  init_temp：0.6→0.4 提升探索；或在前1000 iter 固定增强，之后再让 meta 控制器更新权重，降低早期不稳定。
 """
 
 import argparse

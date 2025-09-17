@@ -1,6 +1,5 @@
 """
-并加入基于自适应多尺度区域对比学习的 AMR-CMB（二分类版本）
-基于 train_cfcmb.py 改造
+伪标签与一致性：提高 base_threshold 至 0.8、consistency 到 1.0，rampup 拉长到 80；teacher_alpha 提到 0.995；temperature 0.5 初期→0.4。
 """
 
 import argparse

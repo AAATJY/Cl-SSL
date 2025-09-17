@@ -10,7 +10,7 @@ parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-
 
 # parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',
 #                     help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_cfcmb_1_2', help='Model name')
+parser.add_argument('--model', type=str, default='train_cfcmb_ms2_8', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',

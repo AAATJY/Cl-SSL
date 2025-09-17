@@ -94,6 +94,7 @@ if args.deterministic:
     cudnn.benchmark = False
     cudnn.deterministic = True
     random.seed(args.seed)
+    np.random.seed(args.seed)
     np.random.seed()
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)

@@ -311,6 +311,7 @@ if __name__ == "__main__":
             # 优化
             student_optimizer.zero_grad()
             total_loss.backward()
+            ##元控制器更新权重##
             meta_controller.update_weights(
                 (weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1) if weighted_loss.numel() else torch.zeros(1).cuda())
             )

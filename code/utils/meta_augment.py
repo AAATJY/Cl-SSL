@@ -9,6 +9,7 @@ from dataloaders.la_version1_3 import (
 )
 
 
+
 class MetaAugController(nn.Module):
     def __init__(self, num_aug, init_temp=0.1, init_weights=None):
         super().__init__()
@@ -79,6 +80,9 @@ class MetaAugController(nn.Module):
         # 清空历史记录
         self.history = []
 
+class MetaAugControllerLabeled(MetaAugController):
+    def __init__(self, num_aug, init_temp=0.2, init_weights=None):
+        super().__init__(num_aug, init_temp, init_weights)
 
 # ------------------- 重构增强工厂 -------------------
 class AugmentationFactory:
@@ -86,7 +90,6 @@ class AugmentationFactory:
     @staticmethod
     def weak_base_aug(patch_size):
         return transforms.Compose([
-            RandomRotFlip(p=0.3),
             RandomCrop(patch_size)
         ])
 
@@ -127,12 +130,8 @@ class WeightedWeakAugment(nn.Module):
         self.augmenters = aug_list
         self.controller = controller  # 元控制器
         self.alpha = alpha  # 融合强度参数 (建议设置为1.0~1.5)
-        self.default_weights = torch.tensor([0.15, 0.15, 0.2, 0.2, 0.3])
     def get_aug_weights(self):
-        if self.controller is None:
-            weights = self.default_weights
-        else:
-            weights = self.controller.weights
+        weights = self.controller.weights
         weights_tensor = weights.clone().detach().float()
         weights_cpu = weights_tensor.cpu().numpy()
         return weights_cpu / np.sum(weights_cpu)
@@ -166,8 +165,7 @@ class WeightedWeakAugment(nn.Module):
 
 
 class DualTransformWrapper:
-    def __init__(self, labeled_aug, unlabeled_aug, controller=None,paired_sample=None):
-        self.labeled_aug = labeled_aug
+    def __init__(self, unlabeled_aug, controller=None,paired_sample=None):
         self.unlabeled_aug = unlabeled_aug
         self.controller = controller
 

@@ -11,7 +11,7 @@ from tqdm import tqdm
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import math
 from utils.meta_augment import (
-    MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
+    MetaAugController, MetaAugControllerLabeled, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
 )
 import random
 import shutil
@@ -151,18 +151,23 @@ if __name__ == "__main__":
     # 控制器与增强器
     meta_controller = MetaAugController(num_aug=6, init_temp=0.4,
                                         init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
+    meta_controller_labeled = MetaAugControllerLabeled(num_aug=5, init_temp=0.2,
+                                                       init_weights=[0.2, 0.2, 0.2, 0.2, 0.2]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
 
-    labeled_aug_in = transforms.Compose([
-        WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs())
-    ])
     labeled_aug_out = transforms.Compose([
         AugmentationFactory.weak_base_aug(patch_size),
+    ])
+    labeled_aug_in = transforms.Compose([
+        WeightedWeakAugment(
+            AugmentationFactory.get_weak_weighted_augs(),
+            controller=meta_controller_labeled,
+        )
     ])
     unlabeled_aug_in = transforms.Compose([
         WeightedWeakAugment(
             AugmentationFactory.get_strong_weighted_augs(),
-            controller=meta_controller
+            controller=meta_controller,
         )
     ])
     unlabeled_aug_out = transforms.Compose([
@@ -176,7 +181,7 @@ if __name__ == "__main__":
         base_dir=train_data_path,
         split='train',
         transform=transforms.Compose([
-            DualTransformWrapper(labeled_aug_out, unlabeled_aug_out),
+            DualTransformWrapper(unlabeled_aug_out),
             ToTensor()
         ]),
         labeled_idxs=labeled_idxs
@@ -308,6 +313,10 @@ if __name__ == "__main__":
             total_loss.backward()
             meta_controller.update_weights(
                 (weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1) if weighted_loss.numel() else torch.zeros(1).cuda())
+            )
+            # 更新标注控制器（用有标注损失）
+            meta_controller_labeled.update_weights(
+                supervised_loss.detach().unsqueeze(0)  # 这里直接用有标注的总监督损失
             )
             torch.nn.utils.clip_grad_norm_(student_model.parameters(), args.grad_clip)
             student_optimizer.step()

@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',
                     help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_cfcmb_ms', help='Model name')
+parser.add_argument('--model', type=str, default='train_cfcmb_2_3', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',

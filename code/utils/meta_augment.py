@@ -166,7 +166,8 @@ class WeightedWeakAugment(nn.Module):
 
 
 class DualTransformWrapper:
-    def __init__(self, unlabeled_aug, controller=None,paired_sample=None):
+    def __init__(self, labeled_aug, unlabeled_aug, controller=None,paired_sample=None):
+        self.labeled_aug = labeled_aug
         self.unlabeled_aug = unlabeled_aug
         self.controller = controller
 

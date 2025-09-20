@@ -1,5 +1,5 @@
 """
-有监督损失：Boundary 权重降到 0.2，CE smoothing 降到 0.05。
+该版本使用meta_augment.py,修改为标注数据仅通过多样化增强进行一次增强，在循环外部不再进行增强
 """
 
 import argparse
@@ -8,7 +8,7 @@ import os
 
 from tqdm import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
@@ -51,7 +51,7 @@ class AugmentationController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cfcmb_2_3', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cfcmb_2_2', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=18000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -149,15 +149,12 @@ if __name__ == "__main__":
     student_optimizer = optim.SGD(student_model.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
 
     # 控制器与增强器
-    meta_controller = MetaAugController(num_aug=6, init_temp=0.6,
+    meta_controller = MetaAugController(num_aug=6, init_temp=0.4,
                                         init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
 
     labeled_aug_in = transforms.Compose([
         WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs())
-    ])
-    labeled_aug_out = transforms.Compose([
-        AugmentationFactory.weak_base_aug(patch_size),
     ])
     unlabeled_aug_in = transforms.Compose([
         WeightedWeakAugment(
@@ -176,7 +173,7 @@ if __name__ == "__main__":
         base_dir=train_data_path,
         split='train',
         transform=transforms.Compose([
-            DualTransformWrapper(labeled_aug_out, unlabeled_aug_out),
+            DualTransformWrapper(unlabeled_aug_out),
             ToTensor()
         ]),
         labeled_idxs=labeled_idxs
@@ -206,12 +203,6 @@ if __name__ == "__main__":
     lr_ = base_lr
 
     def compute_unlabeled_confidence(max_probs, pseudo_labels):
-        """
-        计算每个无标注样本的置信度（平均最大概率；若有前景则在前景区域内平均，否则全局平均）
-        max_probs: [U_bs, D, H, W]
-        pseudo_labels: [U_bs, D, H, W]
-        return: [U_bs] in [0,1]
-        """
         U = max_probs.shape[0]
         scores = []
         for i in range(U):
@@ -270,19 +261,19 @@ if __name__ == "__main__":
 
             # 监督损失（有标注）
             focal_criterion = FocalLoss(alpha=0.8, gamma=2)
-            loss_seg = F.cross_entropy(student_outputs[:labeled_bs], label_batch[:labeled_bs], label_smoothing=0.05)
+            loss_seg = F.cross_entropy(student_outputs[:labeled_bs], label_batch[:labeled_bs], label_smoothing=0.1)
             outputs_soft = F.softmax(student_outputs, dim=1)
             loss_seg_dice = losses.dice_loss(outputs_soft[:labeled_bs, 1, :, :, :],
                                              (label_batch[:labeled_bs] == 1).float())
             loss_boundary = BoundaryLoss()(outputs_soft[:labeled_bs, 1], (label_batch[:labeled_bs] == 1).float())
             loss_focal = focal_criterion(student_outputs[:labeled_bs], label_batch[:labeled_bs])
-            supervised_loss = 0.3 * (loss_seg + loss_seg_dice) + 0.2 * loss_boundary + 0.3 * loss_focal
+            supervised_loss = 0.3 * (loss_seg + loss_seg_dice) + 0.4 * loss_boundary + 0.3 * loss_focal
 
             # 一致性损失（无标注，带动态 mask）
             consistency_weight = get_current_consistency_weight(iter_num // 150)
             consistency_dist = consistency_criterion(
                 student_outputs[labeled_bs:],
-                label_smoothing(probs, factor=0.05)
+                label_smoothing(probs, factor=0.1)
             )
             weighted_loss = consistency_dist * mask
             consistency_loss = consistency_weight * torch.mean(weighted_loss)

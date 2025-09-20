@@ -8,7 +8,7 @@ import os
 
 from tqdm import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
@@ -51,7 +51,7 @@ class AugmentationController:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cfcmb_2_2_8', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cfcmb_2_2', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=18000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -94,7 +94,7 @@ if args.deterministic:
     cudnn.benchmark = False
     cudnn.deterministic = True
     random.seed(args.seed)
-    np.random.seed(args.seed)
+    # np.random.seed(args.seed)
     np.random.seed()
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
@@ -206,12 +206,6 @@ if __name__ == "__main__":
     lr_ = base_lr
 
     def compute_unlabeled_confidence(max_probs, pseudo_labels):
-        """
-        计算每个无标注样本的置信度（平均最大概率；若有前景则在前景区域内平均，否则全局平均）
-        max_probs: [U_bs, D, H, W]
-        pseudo_labels: [U_bs, D, H, W]
-        return: [U_bs] in [0,1]
-        """
         U = max_probs.shape[0]
         scores = []
         for i in range(U):

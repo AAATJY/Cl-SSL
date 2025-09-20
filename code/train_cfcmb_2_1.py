@@ -8,7 +8,7 @@ import os
 
 from tqdm import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import math
 from utils.meta_augment_2 import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
@@ -94,7 +94,7 @@ if args.deterministic:
     cudnn.benchmark = False
     cudnn.deterministic = True
     random.seed(args.seed)
-    np.random.seed(args.seed)
+    # np.random.seed(args.seed)
     np.random.seed()
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
@@ -170,8 +170,8 @@ if __name__ == "__main__":
     ])
 
     # dataloader
-    labeled_idxs = list(range(16))
-    unlabeled_idxs = list(range(16, 80))
+    labeled_idxs = list(range(8))
+    unlabeled_idxs = list(range(8, 80))
     db_train = LAHeart(
         base_dir=train_data_path,
         split='train',

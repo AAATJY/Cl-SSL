@@ -75,7 +75,6 @@ class MetaAugController(nn.Module):
             # **归一化权重**
         with torch.no_grad():
             self.weights.data = self.weights.data / self.weights.data.sum()  # 线性归一化
-        print(self.weights.data)
         # 清空历史记录
         self.history = []
 
@@ -193,13 +192,14 @@ def random_pair_indices(length):
         pair_indices.append(np.random.choice(choices))
     return pair_indices
 
-def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller=None):
+def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller_unlabeld=None,controller_labeled=None):
     images = batch_data['image'].numpy()
     labels = batch_data['label'].numpy()
     is_labeled = batch_data.get('is_labeled', [True] * len(images))
     batch_size = len(images)
     sampled_batch = []
-    aug_indices = []
+    aug_indices_labeled = []
+    aug_indices_unlabeled = []
 
     pair_indices = random_pair_indices(batch_size)
 
@@ -226,9 +226,18 @@ def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller=N
             ToTensor()
         ])(sample)
         sampled_batch.append(sample)
-        if controller is not None and 'aug_idx' in sample:
-            aug_indices.append(sample['aug_idx'])
-    controller.record_batch(aug_indices)
+        if sample.get('is_labeled', True):
+            if controller_labeled is not None and 'aug_idx' in sample:
+                aug_indices_labeled.append(sample['aug_idx'])
+        else:
+            if controller_unlabeld is not None and 'aug_idx' in sample:
+                aug_indices_unlabeled.append(sample['aug_idx'])
+
+    if controller_unlabeld is not None and len(aug_indices_unlabeled) > 0:
+        controller_unlabeld.record_batch(aug_indices_unlabeled)
+    if controller_labeled is not None and len(aug_indices_labeled) > 0:
+        controller_labeled.record_batch(aug_indices_labeled)
+
     # 重组批次数据为字典
     batch_dict = {
         'image': torch.stack([s['image'] for s in sampled_batch]),

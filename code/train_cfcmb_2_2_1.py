@@ -181,7 +181,7 @@ if __name__ == "__main__":
         base_dir=train_data_path,
         split='train',
         transform=transforms.Compose([
-            DualTransformWrapper(unlabeled_aug_out),
+            DualTransformWrapper(labeled_aug_out,unlabeled_aug_out),
             ToTensor()
         ]),
         labeled_idxs=labeled_idxs

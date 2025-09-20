@@ -132,6 +132,7 @@ class WeightedWeakAugment(nn.Module):
         self.alpha = alpha  # 融合强度参数 (建议设置为1.0~1.5)
     def get_aug_weights(self):
         weights = self.controller.weights
+        print(weights)
         weights_tensor = weights.clone().detach().float()
         weights_cpu = weights_tensor.cpu().numpy()
         return weights_cpu / np.sum(weights_cpu)
@@ -165,7 +166,8 @@ class WeightedWeakAugment(nn.Module):
 
 
 class DualTransformWrapper:
-    def __init__(self, unlabeled_aug, controller=None,paired_sample=None):
+    def __init__(self, labeled_aug_out, unlabeled_aug, controller=None,paired_sample=None):
+        self.labeled_aug_out = labeled_aug_out
         self.unlabeled_aug = unlabeled_aug
         self.controller = controller
 
@@ -176,7 +178,7 @@ class DualTransformWrapper:
         else:
             flag = bool(flag)
         if flag:
-            return sample
+            return self.labeled_aug_out(sample)
         else:
             # 判断unlabeled_aug是否需要paired_sample
             if callable(self.unlabeled_aug) and 'sample_pair' in self.unlabeled_aug.__call__.__code__.co_varnames:

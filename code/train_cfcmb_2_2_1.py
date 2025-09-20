@@ -315,10 +315,12 @@ if __name__ == "__main__":
             meta_controller.update_weights(
                 (weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1) if weighted_loss.numel() else torch.zeros(1).cuda())
             )
+            print((weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1) if weighted_loss.numel() else torch.zeros(1).cuda()))
             # 更新标注控制器（用有标注损失）
             meta_controller_labeled.update_weights(
                 supervised_loss.detach().unsqueeze(0)  # 这里直接用有标注的总监督损失
             )
+            print(supervised_loss.detach().unsqueeze(0))
             torch.nn.utils.clip_grad_norm_(student_model.parameters(), args.grad_clip)
             student_optimizer.step()
 

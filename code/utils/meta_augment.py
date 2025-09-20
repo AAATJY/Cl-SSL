@@ -27,11 +27,9 @@ class MetaAugController(nn.Module):
         self.history = []
 
     def get_probs(self):
-        """获取归一化后的增强概率分布（带温度系数）"""
         return F.softmax(self.weights / self.temperature, dim=-1)
 
     def record_batch(self, aug_indices):
-        """记录批次增强选择"""
         self.history.append({
             'indices': aug_indices,
         })
@@ -77,6 +75,7 @@ class MetaAugController(nn.Module):
             # **归一化权重**
         with torch.no_grad():
             self.weights.data = self.weights.data / self.weights.data.sum()  # 线性归一化
+        print(self.weights.data)
         # 清空历史记录
         self.history = []
 
@@ -132,7 +131,6 @@ class WeightedWeakAugment(nn.Module):
         self.alpha = alpha  # 融合强度参数 (建议设置为1.0~1.5)
     def get_aug_weights(self):
         weights = self.controller.weights
-        print(weights)
         weights_tensor = weights.clone().detach().float()
         weights_cpu = weights_tensor.cpu().numpy()
         return weights_cpu / np.sum(weights_cpu)

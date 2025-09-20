@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import math
-from utils.meta_augment_2 import (
+from utils.meta_augment import (
     MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
 )
 import random
@@ -50,7 +50,7 @@ class AugmentationController:
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 parser.add_argument('--exp', type=str, default='train_cfcmb_2_2', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=18000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
@@ -156,6 +156,9 @@ if __name__ == "__main__":
     labeled_aug_in = transforms.Compose([
         WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs())
     ])
+    labeled_aug_out = transforms.Compose([
+        AugmentationFactory.weak_base_aug(patch_size),
+    ])
     unlabeled_aug_in = transforms.Compose([
         WeightedWeakAugment(
             AugmentationFactory.get_strong_weighted_augs(),
@@ -173,7 +176,7 @@ if __name__ == "__main__":
         base_dir=train_data_path,
         split='train',
         transform=transforms.Compose([
-            DualTransformWrapper(unlabeled_aug_out),
+            DualTransformWrapper(labeled_aug_out, unlabeled_aug_out),
             ToTensor()
         ]),
         labeled_idxs=labeled_idxs

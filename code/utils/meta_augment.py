@@ -172,6 +172,7 @@ class DualTransformWrapper:
         self.controller = controller
 
     def __call__(self, sample,paired_sample=None):
+        print(sample.get('is_labeled', True))
         if sample.get('is_labeled', True):
             return self.labeled_aug(sample)
         else:

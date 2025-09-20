@@ -172,9 +172,13 @@ class DualTransformWrapper:
         self.controller = controller
 
     def __call__(self, sample,paired_sample=None):
-        print(sample.get('is_labeled', True))
-        if sample.get('is_labeled', True):
-            return self.labeled_aug(sample)
+        flag = sample.get('is_labeled', True)
+        if isinstance(flag, torch.Tensor):
+            flag = bool(flag.item())
+        else:
+            flag = bool(flag)
+        if flag:
+            return sample
         else:
             # 判断unlabeled_aug是否需要paired_sample
             if callable(self.unlabeled_aug) and 'sample_pair' in self.unlabeled_aug.__call__.__code__.co_varnames:

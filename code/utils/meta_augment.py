@@ -86,6 +86,7 @@ class AugmentationFactory:
     @staticmethod
     def weak_base_aug(patch_size):
         return transforms.Compose([
+            RandomRotFlip(p=0.5),
             RandomCrop(patch_size)
         ])
 
@@ -102,10 +103,10 @@ class AugmentationFactory:
     def get_weak_weighted_augs():
         return [
             GaussianBlur(sigma_range=(0.5, 1.0)),
-            ContrastAdjust(factor_range=(0.8, 1.2)),
-            GammaCorrection(gamma_range=(0.8, 1.2)),
-            LocalShuffle(max_ratio=0.05, block_size=8),
-            RandomNoise(sigma=0.05)
+            ContrastAdjust(factor_range=(0.7, 1.3)),
+            GammaCorrection(gamma_range=(0.7, 1.3)),
+            LocalShuffle(max_ratio=0.1, block_size=8),
+            RandomNoise(sigma=0.1)
         ]
 
     @staticmethod

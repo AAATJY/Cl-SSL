@@ -107,9 +107,13 @@ class AdaptiveMultiScaleRegionContrastiveMemory:
                         if not mask:
                             continue
                     else:
-                        centers_to_use = centers[mask]
-                        if centers_to_use.shape[0] == 0:
-                            continue
+                        if mask.shape[0] == centers.shape[0]:
+                            centers_to_use = centers[mask]
+                            if centers_to_use.shape[0] == 0:
+                                continue
+                        else:
+                            # mask 维度不匹配，直接全部加入
+                            centers_to_use = centers
 
                 for i in range(centers_to_use.shape[0]):
                     # 类别平衡：若队列已满，可优先替换占比更大的类（此处采用最简单策略：满则popleft）

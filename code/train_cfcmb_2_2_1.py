@@ -53,7 +53,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 # parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 
-parser.add_argument('--exp', type=str, default='train_cfcmb_2_2_456', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cfcmb_2_2_234', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=18000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -79,7 +79,7 @@ parser.add_argument('--lambda_con', type=float, default=0.3, help='无标注对�
 parser.add_argument('--amr_scales', type=str, default='enc3,enc4,dec', help='使用的多尺度键（逗号分隔）')
 parser.add_argument('--amr_base_tau', type=float, default=0.15, help='AMR 基础温度')
 parser.add_argument('--amr_conf_threshold', type=float, default=0.95, help='AMR 置信度阈值（用于可选伪标注更新）')
-parser.add_argument('--amr_use_unlabeled_update', type=int, default=1, help='是否用高置信伪标注更新内存 0/1')
+parser.add_argument('--amr_use_unlabeled_update', type=int, default=0, help='是否用高置信伪标注更新内存 0/1')
 parser.add_argument('--amr_max_neg_per_class', type=int, default=128, help='每类负样本最大采样数')
 
 args = parser.parse_args()
@@ -172,8 +172,8 @@ if __name__ == "__main__":
     ])
 
     # dataloader
-    labeled_idxs = list(range(16))
-    unlabeled_idxs = list(range(16, 80))
+    labeled_idxs = list(range(8))
+    unlabeled_idxs = list(range(8, 80))
     db_train = LAHeart(
         base_dir=train_data_path,
         split='train',

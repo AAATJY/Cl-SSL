@@ -1,5 +1,5 @@
 """
-该版本使用meta_augment.py,修改为标注数据仅通过多样化增强进行一次增强，在循环外部不再进行增强
+MetaAugController  init_temp：0.6→0.4 提升探索；或在前1000 iter 固定增强，之后再让 meta 控制器更新权重，降低早期不稳定。
 """
 
 import argparse
@@ -8,10 +8,10 @@ import os
 
 from tqdm import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import math
 from utils.meta_augment import (
-    MetaAugController, MetaAugControllerLabeled, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
+    MetaAugController, DualTransformWrapper, AugmentationFactory, WeightedWeakAugment, batch_aug_wrapper
 )
 import random
 import shutil
@@ -50,8 +50,10 @@ class AugmentationController:
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
-parser.add_argument('--exp', type=str, default='train_cfcmb_2_2', help='model_name')
+parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+# parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+
+parser.add_argument('--exp', type=str, default='train_cfcmb_2_2_456', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=18000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -76,8 +78,8 @@ parser.add_argument('--lambda_con', type=float, default=0.3, help='无标注对�
 # [AMR-CMB] MOD: 新增 AMR 参数
 parser.add_argument('--amr_scales', type=str, default='enc3,enc4,dec', help='使用的多尺度键（逗号分隔）')
 parser.add_argument('--amr_base_tau', type=float, default=0.15, help='AMR 基础温度')
-parser.add_argument('--amr_conf_threshold', type=float, default=0.75, help='AMR 置信度阈值（用于可选伪标注更新）')
-parser.add_argument('--amr_use_unlabeled_update', type=int, default=0, help='是否用高置信伪标注更新内存 0/1')
+parser.add_argument('--amr_conf_threshold', type=float, default=0.95, help='AMR 置信度阈值（用于可选伪标注更新）')
+parser.add_argument('--amr_use_unlabeled_update', type=int, default=1, help='是否用高置信伪标注更新内存 0/1')
 parser.add_argument('--amr_max_neg_per_class', type=int, default=128, help='每类负样本最大采样数')
 
 args = parser.parse_args()
@@ -151,23 +153,18 @@ if __name__ == "__main__":
     # 控制器与增强器
     meta_controller = MetaAugController(num_aug=6, init_temp=0.4,
                                         init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
-    meta_controller_labeled = MetaAugControllerLabeled(num_aug=5, init_temp=0.2,
-                                                       init_weights=[0.2, 0.2, 0.2, 0.2, 0.2]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
 
+    labeled_aug_in = transforms.Compose([
+        WeightedWeakAugment(AugmentationFactory.get_weak_weighted_augs())
+    ])
     labeled_aug_out = transforms.Compose([
         AugmentationFactory.weak_base_aug(patch_size),
-    ])
-    labeled_aug_in = transforms.Compose([
-        WeightedWeakAugment(
-            AugmentationFactory.get_weak_weighted_augs(),
-            controller=meta_controller_labeled,
-        )
     ])
     unlabeled_aug_in = transforms.Compose([
         WeightedWeakAugment(
             AugmentationFactory.get_strong_weighted_augs(),
-            controller=meta_controller,
+            controller=meta_controller
         )
     ])
     unlabeled_aug_out = transforms.Compose([
@@ -181,7 +178,7 @@ if __name__ == "__main__":
         base_dir=train_data_path,
         split='train',
         transform=transforms.Compose([
-            DualTransformWrapper(labeled_aug_out,unlabeled_aug_out),
+            DualTransformWrapper(labeled_aug_out, unlabeled_aug_out),
             ToTensor()
         ]),
         labeled_idxs=labeled_idxs
@@ -229,7 +226,7 @@ if __name__ == "__main__":
             # 数据准备（弱增强给 teacher 产生伪标签）
             weak_volume = sampled_batch['image'].cuda()
             weak_volume_batch = weak_volume[labeled_bs:]
-            sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in, meta_controller,meta_controller_labeled)
+            sampled_batch = batch_aug_wrapper(sampled_batch, labeled_aug_in, unlabeled_aug_in, meta_controller)
             volume_batch, label_batch = sampled_batch['image'], sampled_batch['label']
             volume_batch, label_batch = volume_batch.cuda(), label_batch.cuda()
 
@@ -311,13 +308,8 @@ if __name__ == "__main__":
             # 优化
             student_optimizer.zero_grad()
             total_loss.backward()
-            ##元控制器更新权重##
             meta_controller.update_weights(
                 (weighted_loss.view(weighted_loss.shape[0], -1).mean(dim=1) if weighted_loss.numel() else torch.zeros(1).cuda())
-            )
-            # 更新标注控制器（用有标注损失）
-            meta_controller_labeled.update_weights(
-                supervised_loss.detach().unsqueeze(0)  # 这里直接用有标注的总监督损失
             )
             torch.nn.utils.clip_grad_norm_(student_model.parameters(), args.grad_clip)
             student_optimizer.step()

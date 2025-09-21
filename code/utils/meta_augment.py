@@ -9,7 +9,6 @@ from dataloaders.la_version1_3 import (
 )
 
 
-
 class MetaAugController(nn.Module):
     def __init__(self, num_aug, init_temp=0.1, init_weights=None):
         super().__init__()
@@ -27,9 +26,11 @@ class MetaAugController(nn.Module):
         self.history = []
 
     def get_probs(self):
+        """获取归一化后的增强概率分布（带温度系数）"""
         return F.softmax(self.weights / self.temperature, dim=-1)
 
     def record_batch(self, aug_indices):
+        """记录批次增强选择"""
         self.history.append({
             'indices': aug_indices,
         })
@@ -78,9 +79,6 @@ class MetaAugController(nn.Module):
         # 清空历史记录
         self.history = []
 
-class MetaAugControllerLabeled(MetaAugController):
-    def __init__(self, num_aug, init_temp=0.2, init_weights=None):
-        super().__init__(num_aug, init_temp, init_weights)
 
 # ------------------- 重构增强工厂 -------------------
 class AugmentationFactory:
@@ -128,8 +126,12 @@ class WeightedWeakAugment(nn.Module):
         self.augmenters = aug_list
         self.controller = controller  # 元控制器
         self.alpha = alpha  # 融合强度参数 (建议设置为1.0~1.5)
+        self.default_weights = torch.tensor([0.15, 0.15, 0.2, 0.2, 0.3])
     def get_aug_weights(self):
-        weights = self.controller.weights
+        if self.controller is None:
+            weights = self.default_weights
+        else:
+            weights = self.controller.weights
         weights_tensor = weights.clone().detach().float()
         weights_cpu = weights_tensor.cpu().numpy()
         return weights_cpu / np.sum(weights_cpu)
@@ -163,19 +165,14 @@ class WeightedWeakAugment(nn.Module):
 
 
 class DualTransformWrapper:
-    def __init__(self, labeled_aug_out, unlabeled_aug, controller=None,paired_sample=None):
-        self.labeled_aug_out = labeled_aug_out
+    def __init__(self, labeled_aug,unlabeled_aug, controller=None,paired_sample=None):
+        self.labeled_aug = labeled_aug
         self.unlabeled_aug = unlabeled_aug
         self.controller = controller
 
     def __call__(self, sample,paired_sample=None):
-        flag = sample.get('is_labeled', True)
-        if isinstance(flag, torch.Tensor):
-            flag = bool(flag.item())
-        else:
-            flag = bool(flag)
-        if flag:
-            return self.labeled_aug_out(sample)
+        if sample.get('is_labeled', True):
+            return self.labeled_aug(sample)
         else:
             # 判断unlabeled_aug是否需要paired_sample
             if callable(self.unlabeled_aug) and 'sample_pair' in self.unlabeled_aug.__call__.__code__.co_varnames:
@@ -192,14 +189,13 @@ def random_pair_indices(length):
         pair_indices.append(np.random.choice(choices))
     return pair_indices
 
-def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller_unlabeld=None,controller_labeled=None):
+def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller=None):
     images = batch_data['image'].numpy()
     labels = batch_data['label'].numpy()
     is_labeled = batch_data.get('is_labeled', [True] * len(images))
     batch_size = len(images)
     sampled_batch = []
-    aug_indices_labeled = []
-    aug_indices_unlabeled = []
+    aug_indices = []
 
     pair_indices = random_pair_indices(batch_size)
 
@@ -226,18 +222,9 @@ def batch_aug_wrapper(batch_data, labeled_aug_in, unlabeled_aug_in, controller_u
             ToTensor()
         ])(sample)
         sampled_batch.append(sample)
-        if sample.get('is_labeled', True):
-            if controller_labeled is not None and 'aug_idx' in sample:
-                aug_indices_labeled.append(sample['aug_idx'])
-        else:
-            if controller_unlabeld is not None and 'aug_idx' in sample:
-                aug_indices_unlabeled.append(sample['aug_idx'])
-
-    if controller_unlabeld is not None and len(aug_indices_unlabeled) > 0:
-        controller_unlabeld.record_batch(aug_indices_unlabeled)
-    if controller_labeled is not None and len(aug_indices_labeled) > 0:
-        controller_labeled.record_batch(aug_indices_labeled)
-
+        if controller is not None and 'aug_idx' in sample:
+            aug_indices.append(sample['aug_idx'])
+    controller.record_batch(aug_indices)
     # 重组批次数据为字典
     batch_dict = {
         'image': torch.stack([s['image'] for s in sampled_batch]),

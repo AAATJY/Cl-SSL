@@ -102,16 +102,28 @@ class AugmentationFactory:
     @staticmethod
     def get_weak_weighted_augs():
         return [
-            GaussianBlur(sigma_range=(0.5, 1.0)),
-            ContrastAdjust(factor_range=(0.7, 1.3)),
-            GammaCorrection(gamma_range=(0.7, 1.3)),
-            LocalShuffle(max_ratio=0.1, block_size=8),
-            RandomNoise(sigma=0.1)
+            # GaussianBlur(sigma_range=(0.5, 1.0)),
+            # ContrastAdjust(factor_range=(0.7, 1.3)),
+            # GammaCorrection(gamma_range=(0.7, 1.3)),
+            # LocalShuffle(max_ratio=0.1, block_size=8),
+            # RandomNoise(sigma=0.1)
+            # 增强后的参数
+            GaussianBlur(sigma_range=(0.8, 1.8)),  # 增加模糊强度范围
+            ContrastAdjust(factor_range=(0.5, 1.8)),  # 扩大对比度调整范围
+            GammaCorrection(gamma_range=(0.5, 1.8)),  # 扩展伽马校正范围
+            LocalShuffle(max_ratio=0.25, block_size=12),  # 增加局部打乱比例和块大小
+            RandomNoise(sigma=0.18)  # 增加噪声强度
         ]
 
     @staticmethod
     def get_strong_weighted_augs():
         return [
+            # GaussianBlur(sigma_range=(1.5, 3.5)),
+            # GammaCorrection(gamma_range=(0.3, 3.0)),
+            # LocalShuffle(max_ratio=0.4, block_size=32),
+            # EdgeEnhancement(),  # (需内部实现支持更强的锐化效果)
+            # RandomNoise(sigma=0.4),
+            # ContrastAdjust(factor_range=(0.6, 1.5))
             GaussianBlur(sigma_range=(1.0, 2.0)),
             GammaCorrection(gamma_range=(0.5, 2.5)),
             LocalShuffle(max_ratio=0.2, block_size=16),

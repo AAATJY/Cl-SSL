@@ -53,7 +53,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 # parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 
-parser.add_argument('--exp', type=str, default='train_cfcmb_2_2_234', help='model_name')
+parser.add_argument('--exp', type=str, default='train_cfcmb_2_2_123origin', help='model_name')
 parser.add_argument('--max_iterations', type=int, default=18000, help='maximum epoch number to train')
 parser.add_argument('--batch_size', type=int, default=4, help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=2, help='labeled_batch_size per gpu')
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     student_optimizer = optim.SGD(student_model.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
 
     # 控制器与增强器
-    meta_controller = MetaAugController(num_aug=6, init_temp=0.4,
+    meta_controller = MetaAugController(num_aug=6, init_temp=0.6,
                                         init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
 
@@ -172,8 +172,8 @@ if __name__ == "__main__":
     ])
 
     # dataloader
-    labeled_idxs = list(range(8))
-    unlabeled_idxs = list(range(8, 80))
+    labeled_idxs = list(range(16))
+    unlabeled_idxs = list(range(16, 80))
     db_train = LAHeart(
         base_dir=train_data_path,
         split='train',

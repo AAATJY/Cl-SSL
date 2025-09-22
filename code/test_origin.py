@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import argparse
 import torch
 from networks.vnet_cfcmb import VNet
@@ -10,7 +10,7 @@ parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/Me
 
 # parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/Cl-SSL/data/2018LA_Seg_Training Set/',
 #                     help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_cfcmb_2_2_456', help='Model name')
+parser.add_argument('--model', type=str, default='train_cfcmb_2_2_789', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',

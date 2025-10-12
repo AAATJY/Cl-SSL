@@ -18,7 +18,7 @@ parser.add_argument('--test_mode', type=str, default='student',
 ##### MPL MOD END
 
 # 新增：导出PNG切片相关参数
-parser.add_argument('--save_png', action='store_true', help='Export PNG slices for predictions')
+parser.add_argument('--save_png', action='store_true', default=True,help='Export PNG slices for predictions')
 parser.add_argument('--overlay_png', action='store_true', help='Save overlay image with prediction mask')
 parser.add_argument('--slice_axis', type=str, default='z', choices=['x', 'y', 'z'], help='Slice axis for PNG export')
 

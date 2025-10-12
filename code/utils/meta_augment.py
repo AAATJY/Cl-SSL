@@ -102,17 +102,32 @@ class AugmentationFactory:
     @staticmethod
     def get_weak_weighted_augs():
         return [
-            # 增强后的参数
+            # 稍弱的增强
             GaussianBlur(sigma_range=(0.8, 1.8)),  # 增加模糊强度范围
             ContrastAdjust(factor_range=(0.5, 1.8)),  # 扩大对比度调整范围
             GammaCorrection(gamma_range=(0.5, 1.8)),  # 扩展伽马校正范围
             LocalShuffle(max_ratio=0.25, block_size=12),  # 增加局部打乱比例和块大小
             RandomNoise(sigma=0.18)  # 增加噪声强度
-            # GaussianBlur(sigma_range=(0.5, 1.0)),
-            # ContrastAdjust(factor_range=(0.7, 1.3)),
-            # GammaCorrection(gamma_range=(0.7, 1.3)),
-            # LocalShuffle(max_ratio=0.1, block_size=8),
-            # RandomNoise(sigma=0.1)
+
+            # ========================== 第二版稍弱增强 =========================== #
+            # GaussianBlur(sigma_range=(0.65, 1.5)),                              #
+            # ContrastAdjust(factor_range=(0.6, 1.6)),                           #
+            # GammaCorrection(gamma_range=(0.6, 1.6)),                           #
+            # LocalShuffle(max_ratio=0.2, block_size=12),                       #
+            # RandomNoise(sigma=0.15)                                            #
+            # ===================================================================#
+
+            # ========================== 第一版加强增强 =========================== #   # ============================= 原始增强 ============================ #
+            # GaussianBlur(sigma_range=(0.8, 1.8)),                              #   # GaussianBlur(sigma_range=(0.5, 1.0)),                              #
+            # ContrastAdjust(factor_range=(0.5, 1.8)),                           #   # ContrastAdjust(factor_range=(0.7, 1.3)),                           #
+            # GammaCorrection(gamma_range=(0.5, 1.8)),                           #   # GammaCorrection(gamma_range=(0.7, 1.3)),                           #
+            # LocalShuffle(max_ratio=0.25, block_size=12),                       #   # LocalShuffle(max_ratio=0.1, block_size=8),                         #
+            # RandomNoise(sigma=0.18)                                            #   # RandomNoise(sigma=0.1)                                             #
+            # ===================================================================#   #====================================================================#
+
+
+
+
         ]
 
     @staticmethod

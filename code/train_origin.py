@@ -142,7 +142,7 @@ if __name__ == "__main__":
     student_optimizer = optim.SGD(student_model.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
 
     # ================= MPL控制器、元控制器和增强控制器初始化 =================
-    meta_controller = MetaAugController(num_aug=6,init_temp=0.6,init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
+    meta_controller = MetaAugController(num_aug=6,init_temp=0.4,init_weights=[0.166, 0.166, 0.166, 0.166, 0.166, 0.166]).cuda()
     aug_controller = AugmentationController(args.max_iterations)
     # ================= 增强策略及数据加载 =================
     labeled_aug_in = transforms.Compose([

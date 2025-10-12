@@ -1,8 +1,8 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import argparse
 import torch
-from networks.vnet_cfcmb import VNet
+from networks.vnet_cfcmb_2 import VNet
 from test_util_origin import test_all_case
 
 parser = argparse.ArgumentParser()
@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',
                     help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_cfcmb_2_1_8', help='Model name')
+parser.add_argument('--model', type=str, default='train_cfcmb_2_2_123weak_MP_962', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',

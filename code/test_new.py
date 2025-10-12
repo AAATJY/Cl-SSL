@@ -1,27 +1,38 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 import argparse
 import torch
-from networks.vnet_cfcmb_2 import VNet
+from networks.vnet_cfcmb import VNet
 from test_util_origin import test_all_case
 
 parser = argparse.ArgumentParser()
-# parser.add_argument('--root_path', type=str, default='/home/ubuntu/workspace/Cl-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
+parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/', help='Name of Experiment')
 
-parser.add_argument('--root_path', type=str, default='/home/zlj/workspace/tjy/MeTi-SSL/data/2018LA_Seg_Training Set/',
-                    help='Dataset root path')
-parser.add_argument('--model', type=str, default='train_cfcmb_2_2_123weak_MP_959', help='Model name')
+# parser.add_argument('--root_path', type=str, default='/root/autodl-tmp/Cl-SSL/data/2018LA_Seg_Training Set/',
+#                     help='Dataset root path')
+parser.add_argument('--model', type=str, default='train_cfcmb_2_2_123strong', help='Model name')
 parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 ##### MPL MOD START 新增测试模式参数
 parser.add_argument('--test_mode', type=str, default='student',
                     choices=['student', 'teacher', 'ema'], help='Which model to test')
 ##### MPL MOD END
+
+# 新增：导出PNG切片相关参数
+parser.add_argument('--save_png', action='store_true', help='Export PNG slices for predictions')
+parser.add_argument('--overlay_png', action='store_true', help='Save overlay image with prediction mask')
+parser.add_argument('--slice_axis', type=str, default='z', choices=['x', 'y', 'z'], help='Slice axis for PNG export')
+
 FLAGS = parser.parse_args()
 
 snapshot_path = "../model/" + FLAGS.model + "/"
 test_save_path = "../model/prediction/{}_{}_post/".format(FLAGS.model, FLAGS.test_mode)  ##### MPL MOD
 if not os.path.exists(test_save_path):
     os.makedirs(test_save_path)
+
+# 新增：PNG导出目录
+png_save_path = "../model/prediction_png/{}_{}_{}/".format(FLAGS.model, FLAGS.test_mode, FLAGS.slice_axis)
+if FLAGS.save_png and not os.path.exists(png_save_path):
+    os.makedirs(png_save_path)
 
 num_classes = 2
 
@@ -50,11 +61,13 @@ def test_calculate_metric(epoch_num):
     print("Loaded {} model weights from {}".format(FLAGS.test_mode, save_mode_path))
     net.eval()
 
-    # 保持原有测试参数
+    # 保持原有测试参数 + 新增PNG导出参数
     avg_metric = test_all_case(
         net, image_list, num_classes=num_classes,
         patch_size=(112, 112, 80), stride_xy=18, stride_z=4,
-        save_result=True, test_save_path=test_save_path
+        save_result=True, test_save_path=test_save_path,
+        save_png=FLAGS.save_png, png_save_path=png_save_path,
+        overlay_png=FLAGS.overlay_png, slice_axis=FLAGS.slice_axis
     )
     return avg_metric
 
@@ -71,30 +84,4 @@ if __name__ == '__main__':
     metric = test_calculate_metric(15000)
     print(f"Results: {metric}\n")
     metric = test_calculate_metric(14000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(13000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(12000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(11000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(10000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(9000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(8000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(7000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(6000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(5000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(4000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(3000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(2000)
-    print(f"Results: {metric}\n")
-    metric = test_calculate_metric(1000)
     print(f"Results: {metric}\n")

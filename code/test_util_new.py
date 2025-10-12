@@ -95,7 +95,13 @@ def test_all_case(net,
 
     total_metric = 0.0
     for image_path in tqdm(image_list):
+        # 用上级目录名作为病例ID
+        case_id = os.path.basename(os.path.dirname(image_path))
         id = image_path.split('/')[-1].replace('.h5', '')
+
+        # 每个病例单独保存
+        case_save_path = os.path.join(test_save_path, case_id)
+        os.makedirs(case_save_path, exist_ok=True)
         h5f = h5py.File(image_path, 'r')
         image = h5f['image'][:]
         label = h5f['label'][:]

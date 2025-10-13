@@ -102,6 +102,7 @@ def test_all_case(net,
         # 每个病例单独保存
         case_save_path = os.path.join(test_save_path, case_id)
         os.makedirs(case_save_path, exist_ok=True)
+
         h5f = h5py.File(image_path, 'r')
         image = h5f['image'][:]
         label = h5f['label'][:]
@@ -116,13 +117,15 @@ def test_all_case(net,
         total_metric += np.asarray(single_metric)
 
         if save_result:
-            os.makedirs(test_save_path, exist_ok=True)
-            nib.save(nib.Nifti1Image(prediction.astype(np.float32), np.eye(4)), os.path.join(test_save_path, id + "_pred.nii.gz"))
-            nib.save(nib.Nifti1Image(image[:].astype(np.float32), np.eye(4)), os.path.join(test_save_path, id + "_img.nii.gz"))
-            nib.save(nib.Nifti1Image(label[:].astype(np.float32), np.eye(4)), os.path.join(test_save_path, id + "_gt.nii.gz"))
+            nib.save(nib.Nifti1Image(prediction.astype(np.float32), np.eye(4)),
+                     os.path.join(case_save_path, id + "_pred.nii.gz"))
+            nib.save(nib.Nifti1Image(image[:].astype(np.float32), np.eye(4)),
+                     os.path.join(case_save_path, id + "_img.nii.gz"))
+            nib.save(nib.Nifti1Image(label[:].astype(np.float32), np.eye(4)),
+                     os.path.join(case_save_path, id + "_gt.nii.gz"))
 
         if save_png:
-            case_png_dir = os.path.join(png_save_path if png_save_path is not None else test_save_path, id)
+            case_png_dir = os.path.join(png_save_path if png_save_path is not None else case_save_path, case_id)
             _save_prediction_pngs(image=image,
                                   prediction=prediction,
                                   label=label,

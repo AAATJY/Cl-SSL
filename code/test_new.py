@@ -16,23 +16,12 @@ parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
 parser.add_argument('--test_mode', type=str, default='student',
                     choices=['student', 'teacher', 'ema'], help='Which model to test')
 ##### MPL MOD END
-
-# 新增：导出PNG切片相关参数
-parser.add_argument('--save_png', action='store_true', default=True,help='Export PNG slices for predictions')
-parser.add_argument('--overlay_png', action='store_true', help='Save overlay image with prediction mask')
-parser.add_argument('--slice_axis', type=str, default='z', choices=['x', 'y', 'z'], help='Slice axis for PNG export')
-
 FLAGS = parser.parse_args()
 
 snapshot_path = "../model/" + FLAGS.model + "/"
 test_save_path = "../model/prediction/{}_{}_post/".format(FLAGS.model, FLAGS.test_mode)  ##### MPL MOD
 if not os.path.exists(test_save_path):
     os.makedirs(test_save_path)
-
-# 新增：PNG导出目录
-png_save_path = "../model/prediction_png/{}_{}_{}/".format(FLAGS.model, FLAGS.test_mode, FLAGS.slice_axis)
-if FLAGS.save_png and not os.path.exists(png_save_path):
-    os.makedirs(png_save_path)
 
 num_classes = 2
 
@@ -61,13 +50,11 @@ def test_calculate_metric(epoch_num):
     print("Loaded {} model weights from {}".format(FLAGS.test_mode, save_mode_path))
     net.eval()
 
-    # 保持原有测试参数 + 新增PNG导出参数
+    # 保持原有测试参数
     avg_metric = test_all_case(
         net, image_list, num_classes=num_classes,
         patch_size=(112, 112, 80), stride_xy=18, stride_z=4,
-        save_result=True, test_save_path=test_save_path,
-        save_png=FLAGS.save_png, png_save_path=png_save_path,
-        overlay_png=FLAGS.overlay_png, slice_axis=FLAGS.slice_axis
+        save_result=True, test_save_path=test_save_path
     )
     return avg_metric
 
@@ -75,6 +62,5 @@ def test_calculate_metric(epoch_num):
 ##### MPL MOD END
 
 if __name__ == '__main__':
-
     metric = test_calculate_metric(14000)
     print(f"Results: {metric}\n")

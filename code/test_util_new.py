@@ -1,108 +1,86 @@
+import os
+
 import h5py
 import math
 import nibabel as nib
 import numpy as np
+from matplotlib import pyplot as plt
 from medpy import metric
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+import numpy as np
+import plotly.graph_objects as go
+from skimage import measure
+from scipy.ndimage import zoom
 import os
-import imageio.v2 as imageio
 
-
-def _normalize_to_uint8(img2d: np.ndarray) -> np.ndarray:
-    mn, mx = float(img2d.min()), float(img2d.max())
-    if mx > mn:
-        arr = (img2d - mn) / (mx - mn)
-    else:
-        arr = np.zeros_like(img2d, dtype=np.float32)
-    return (arr * 255.0).clip(0, 255).astype(np.uint8)
-
-
-def _save_prediction_pngs(image: np.ndarray,
-                          prediction: np.ndarray,
-                          label: np.ndarray,
-                          out_dir: str,
-                          base_id: str,
-                          axis: int = 2,
-                          overlay: bool = True):
+def plotly_3d_surface_smooth(binary_mask, save_path, color='red', title='', scale_factor=2):
     """
-    将3D图像的每个切片保存为PNG；同时可保存分割叠加图
-    image: [D,H,W] 或 [W,H,D]（保持与调用处一致，这里按 test 单例传入）
-    prediction: 同尺寸整数标签（0/1/…）
-    label: 同尺寸整数标签（0/1/…）
-    axis: 0=x, 1=y, 2=z（默认轴向切片）
+    可旋转 HTML + 更光滑表面
+    binary_mask: 3D numpy array
     """
-    os.makedirs(out_dir, exist_ok=True)
-    assert image.shape == prediction.shape == label.shape, "image/pred/label 形状需一致"
+    # 1) 提前插值/平滑 mask
+    mask_highres = zoom(binary_mask, zoom=scale_factor, order=3)
 
-    num_slices = image.shape[axis]
-    for idx in range(num_slices):
-        if axis == 0:
-            img2d = image[idx, :, :]
-            pred2d = prediction[idx, :, :]
-            gt2d = label[idx, :, :]
-        elif axis == 1:
-            img2d = image[:, idx, :]
-            pred2d = prediction[:, idx, :]
-            gt2d = label[:, idx, :]
-        else:
-            img2d = image[:, :, idx]
-            pred2d = prediction[:, :, idx]
-            gt2d = label[:, :, idx]
+    # 2) marching cubes
+    verts, faces, normals, values = measure.marching_cubes(mask_highres, level=0.5)
 
-        img_u8 = _normalize_to_uint8(img2d)
-        pred_u8 = (pred2d.astype(np.uint8) * 255)
-        gt_u8 = (gt2d.astype(np.uint8) * 255)
+    mesh = go.Mesh3d(
+        x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
+        i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
+        color=color, opacity=1.0, name=title
+    )
 
-        imageio.imwrite(os.path.join(out_dir, f"{base_id}_img_{idx:03d}.png"), img_u8)
-        imageio.imwrite(os.path.join(out_dir, f"{base_id}_pred_{idx:03d}.png"), pred_u8)
-        imageio.imwrite(os.path.join(out_dir, f"{base_id}_gt_{idx:03d}.png"), gt_u8)
+    fig = go.Figure(data=[mesh])
+    fig.update_layout(
+        title=title,
+        scene=dict(
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+            aspectmode='data',
+        ),
+        margin=dict(l=0, r=0, b=0, t=30)
+    )
 
-        if overlay:
-            # 将灰度转为RGB，并将预测掩膜以红色叠加
-            rgb = np.stack([img_u8, img_u8, img_u8], axis=-1).astype(np.float32)
-            mask = pred2d.astype(bool)
-            mask3 = np.stack([mask, mask, mask], axis=-1)
-            color = np.array([255.0, 0.0, 0.0], dtype=np.float32)  # 红色
-            alpha = 0.4
-            overlay_img = rgb.copy()
-            overlay_img[mask3] = (alpha * color + (1 - alpha) * overlay_img[mask3])
-            overlay_img = overlay_img.clip(0, 255).astype(np.uint8)
-            imageio.imwrite(os.path.join(out_dir, f"{base_id}_overlay_{idx:03d}.png"), overlay_img)
+    # ✅ 初始可读视角
+    fig.update_layout(scene_camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)))
+
+    # ✅ 自由轨迹球旋转
+    fig.update_scenes(dragmode="orbit")
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    fig.write_html(save_path)
+    print(f"Saved: {save_path}")
 
 
-def test_all_case(net,
-                  image_list,
-                  num_classes,
-                  patch_size=(112, 112, 80),
-                  stride_xy=18,
-                  stride_z=4,
-                  save_result=True,
-                  test_save_path=None,
-                  preproc_fn=None,
-                  save_png=False,
-                  png_save_path=None,
-                  overlay_png=False,
-                  slice_axis='z'):
-    """
-    新增导出PNG切片图像功能：
-    - save_png=True 时，按 slice_axis 导出整卷每张切片的图像/预测/GT及叠加图（可选）
-    - slice_axis: 'x'/'y'/'z' -> 0/1/2
-    """
-    axis_map = {'x': 0, 'y': 1, 'z': 2}
-    axis = axis_map.get(slice_axis, 2)
+def save_all_overlay_slices(image, label, prediction, save_dir, id):
+    os.makedirs(save_dir, exist_ok=True)
+    num_slices = image.shape[-1]
+    for i in range(num_slices):
+        img_slice = image[..., i]
+        label_slice = label[..., i]
+        pred_slice = prediction[..., i]
 
+        fig, ax = plt.subplots(figsize=(6,6))
+        ax.imshow(img_slice, cmap='gray', alpha=0.7)
+        # 标签红色轮廓线
+        ax.contour(label_slice, levels=[0.5], colors='red', linewidths=2)
+        # 预测黄色轮廓线
+        ax.contour(pred_slice, levels=[0.5], colors='yellow', linewidths=2)
+        ax.axis('off')
+        plt.tight_layout()
+        out_path = os.path.join(save_dir, f"{id}_slice_{i:03d}_overlay.png")
+        plt.savefig(out_path, bbox_inches='tight', pad_inches=0)
+        plt.close(fig)
+
+
+def test_all_case(net, image_list, num_classes, patch_size=(112, 112, 80), stride_xy=18, stride_z=4, save_result=True,
+                  test_save_path=None, preproc_fn=None):
     total_metric = 0.0
     for image_path in tqdm(image_list):
-        # 用上级目录名作为病例ID
-        case_id = os.path.basename(os.path.dirname(image_path))
-        id = image_path.split('/')[-1].replace('.h5', '')
-
-        # 每个病例单独保存
-        case_save_path = os.path.join(test_save_path, case_id)
-        os.makedirs(case_save_path, exist_ok=True)
-
+        id = image_path.split('/')[-1]
         h5f = h5py.File(image_path, 'r')
         image = h5f['image'][:]
         label = h5f['label'][:]
@@ -117,22 +95,15 @@ def test_all_case(net,
         total_metric += np.asarray(single_metric)
 
         if save_result:
-            nib.save(nib.Nifti1Image(prediction.astype(np.float32), np.eye(4)),
-                     os.path.join(case_save_path, id + "_pred.nii.gz"))
-            nib.save(nib.Nifti1Image(image[:].astype(np.float32), np.eye(4)),
-                     os.path.join(case_save_path, id + "_img.nii.gz"))
-            nib.save(nib.Nifti1Image(label[:].astype(np.float32), np.eye(4)),
-                     os.path.join(case_save_path, id + "_gt.nii.gz"))
-
-        if save_png:
-            case_png_dir = os.path.join(png_save_path if png_save_path is not None else case_save_path, case_id)
-            _save_prediction_pngs(image=image,
-                                  prediction=prediction,
-                                  label=label,
-                                  out_dir=case_png_dir,
-                                  base_id=id,
-                                  axis=axis,
-                                  overlay=overlay_png)
+            nib.save(nib.Nifti1Image(prediction.astype(np.float32), np.eye(4)), test_save_path + id + "_pred.nii.gz")
+            nib.save(nib.Nifti1Image(image[:].astype(np.float32), np.eye(4)), test_save_path + id + "_img.nii.gz")
+            nib.save(nib.Nifti1Image(label[:].astype(np.float32), np.eye(4)), test_save_path + id + "_gt.nii.gz")
+        # overlay_dir = os.path.join(test_save_path, id + "_overlay_slices")
+        # save_all_overlay_slices(image, label, prediction, overlay_dir, id)
+        # 替换原本的散点图函数
+        plotly_3d_surface_smooth(label, os.path.join(test_save_path, f"{id}_label3d.html"), color='red', title='Label')
+        plotly_3d_surface_smooth(prediction, os.path.join(test_save_path, f"{id}_prediction3d.html"), color='yellow',
+                                 title='Prediction')
 
     avg_metric = total_metric / len(image_list)
     print('average metric is {}'.format(avg_metric))

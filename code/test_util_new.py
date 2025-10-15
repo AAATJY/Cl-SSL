@@ -15,16 +15,18 @@ from skimage import measure
 from scipy.ndimage import zoom
 import os
 
-def plotly_3d_surface_smooth(binary_mask, save_path, color='red', title='', scale_factor=2):
+def plotly_3d_surface_smooth(binary_mask, save_path, color='red', title='', scale_factor=4, mc_step_size=1):
     """
     可旋转 HTML + 更光滑表面
     binary_mask: 3D numpy array
+    scale_factor: 插值放大倍数，越大越细腻
+    mc_step_size: marching cubes步长，越小越细腻（推荐1）
     """
     # 1) 提前插值/平滑 mask
     mask_highres = zoom(binary_mask, zoom=scale_factor, order=3)
 
-    # 2) marching cubes
-    verts, faces, normals, values = measure.marching_cubes(mask_highres, level=0.5)
+    # 2) marching cubes，步长更小，表面更平滑
+    verts, faces, normals, values = measure.marching_cubes(mask_highres, level=0.5, step_size=mc_step_size)
 
     mesh = go.Mesh3d(
         x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
@@ -92,6 +94,7 @@ def test_all_case(net, image_list, num_classes, patch_size=(112, 112, 80), strid
             single_metric = (0, 0, 0, 0)
         else:
             single_metric = calculate_metric_percase(prediction, label[:])
+            print(single_metric)
         total_metric += np.asarray(single_metric)
 
         if save_result:
@@ -101,9 +104,9 @@ def test_all_case(net, image_list, num_classes, patch_size=(112, 112, 80), strid
         # overlay_dir = os.path.join(test_save_path, id + "_overlay_slices")
         # save_all_overlay_slices(image, label, prediction, overlay_dir, id)
         # 替换原本的散点图函数
-        plotly_3d_surface_smooth(label, os.path.join(test_save_path, f"{id}_label3d.html"), color='red', title='Label')
-        plotly_3d_surface_smooth(prediction, os.path.join(test_save_path, f"{id}_prediction3d.html"), color='yellow',
-                                 title='Prediction')
+        # plotly_3d_surface_smooth(label, os.path.join(test_save_path, f"{id}_label3d.html"), color='red', title='Label')
+        # plotly_3d_surface_smooth(prediction, os.path.join(test_save_path, f"{id}_prediction3d.html"), color='yellow',
+        #                          title='Prediction')
 
     avg_metric = total_metric / len(image_list)
     print('average metric is {}'.format(avg_metric))
